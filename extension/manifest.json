@@ -1,0 +1,20 @@
+{
+  "manifest_version": 3,
+  "name": "TruthShield Companion",
+  "version": "1.0",
+  "description": "Right-click context scanning for AI Text, scammers, and fact-checking verified by TruthShield.",
+  "permissions": ["contextMenus", "activeTab", "storage"],
+  "host_permissions": ["http://localhost:3000/*"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": "icon.png"
+  },
+  "icons": {
+    "16": "icon.png",
+    "48": "icon.png",
+    "128": "icon.png"
+  }
+}

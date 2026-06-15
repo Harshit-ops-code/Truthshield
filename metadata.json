@@ -1,0 +1,8 @@
+{
+  "name": "TruthShield",
+  "description": "AI & Fake Content Detection Platform to combat deepfakes, generated images, fake articles, and social media rumors using state-of-the-art vision and search-grounded text verification.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
