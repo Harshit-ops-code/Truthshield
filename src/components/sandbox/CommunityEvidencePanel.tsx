@@ -150,7 +150,7 @@ export default function CommunityEvidencePanel({ contentId, currentUser, onReput
 
   return (
     <div className="mt-6 border-t border-emerald-500/10 pt-5 space-y-4 text-left">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-950/40 p-4 rounded-2xl border border-emerald-500/10">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-50/85 p-4 rounded-2xl border border-emerald-500/15">
         <div>
           <div className="flex items-center gap-1.5 text-xs text-emerald-600 font-bold uppercase tracking-wider font-mono">
             <MessageSquare className="w-3.5 h-3.5" /> Community Forensic Bulletin
@@ -284,10 +284,10 @@ export default function CommunityEvidencePanel({ contentId, currentUser, onReput
       </div>
 
       {currentUser ? (
-        <form onSubmit={handleSubmitEvidence} className="bg-slate-950/40 border border-emerald-500/10 p-4 rounded-2xl space-y-3">
+        <form onSubmit={handleSubmitEvidence} className="bg-slate-50/85 border border-emerald-500/15 p-4 rounded-2xl space-y-3">
           <div className="flex items-center justify-between border-b border-emerald-500/20 pb-2">
             <span className="text-[10px] font-mono font-bold text-slate-400 uppercase tracking-wider">File Verified Proof & Citation</span>
-            <span className="text-[9px] text-emerald-400 font-bold bg-emerald-500/10 px-1.5 py-0.5 rounded">Submitter: @{currentUser.username}</span>
+            <span className="text-[9px] text-emerald-600 font-bold bg-emerald-500/10 px-1.5 py-0.5 rounded">Submitter: @{currentUser.username}</span>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 text-xs">
@@ -296,7 +296,7 @@ export default function CommunityEvidencePanel({ contentId, currentUser, onReput
               <select
                 value={newType}
                 onChange={(e) => setNewType(e.target.value as "support" | "refute")}
-                className="w-full bg-slate-900/80 border border-slate-800 rounded-xl px-2.5 py-1.5 focus:outline-none text-white text-xs"
+                className="w-full bg-white border border-slate-200 rounded-xl px-2.5 py-1.5 focus:outline-none text-slate-800 text-xs"
               >
                 <option value="refute">Unmasks Manipulated / Deepfaked Claim (Refute)</option>
                 <option value="support">Supports Authenticity / Photographic Fact (Support)</option>
@@ -310,7 +310,7 @@ export default function CommunityEvidencePanel({ contentId, currentUser, onReput
                 placeholder="https://credibleoutlet.com/fact-check-report"
                 value={newLinkUrl}
                 onChange={(e) => setNewLinkUrl(e.target.value)}
-                className="w-full bg-slate-900/80 border border-slate-800 rounded-xl px-2.5 py-1.5 focus:outline-none text-white text-xs"
+                className="w-full bg-white border border-slate-200 rounded-xl px-2.5 py-1.5 focus:outline-none text-slate-800 text-xs"
               />
             </div>
           </div>
@@ -323,7 +323,7 @@ export default function CommunityEvidencePanel({ contentId, currentUser, onReput
               placeholder="Detail your scientific or architectural proof (e.g., specular eye reflections, acoustic timestamps, EXIF logs, Snopes checking)..."
               value={newStatement}
               onChange={(e) => setNewStatement(e.target.value)}
-              className="w-full bg-slate-900/80 border border-slate-800 rounded-xl p-2 focus:outline-none text-white text-xs font-sans leading-relaxed"
+              className="w-full bg-white border border-slate-200 rounded-xl p-2 focus:outline-none text-slate-800 text-xs font-sans leading-relaxed"
             />
           </div>
 
@@ -335,10 +335,10 @@ export default function CommunityEvidencePanel({ contentId, currentUser, onReput
           </button>
         </form>
       ) : (
-        <div className="p-4 bg-slate-950/40 border border-emerald-500/10 rounded-2xl text-center flex flex-col items-center gap-2">
-          <HelpCircle className="w-6 h-6 text-emerald-400" />
-          <p className="text-xs font-bold text-white uppercase">WANT TO FILE CONTRIBUTING EVIDENCE?</p>
-          <p className="text-[11px] text-slate-400 max-w-sm leading-normal">
+        <div className="p-4 bg-slate-50/85 border border-emerald-500/15 rounded-2xl text-center flex flex-col items-center gap-2">
+          <HelpCircle className="w-6 h-6 text-emerald-600" />
+          <p className="text-xs font-bold text-slate-800 uppercase">WANT TO FILE CONTRIBUTING EVIDENCE?</p>
+          <p className="text-[11px] text-slate-500 max-w-sm leading-normal">
             Authenticate in the sidebar Security Hub to build reputation, submit evidence, and gain verifier badges.
           </p>
         </div>
