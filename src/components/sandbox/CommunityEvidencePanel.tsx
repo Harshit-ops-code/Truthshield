@@ -65,12 +65,15 @@ export default function CommunityEvidencePanel({ contentId, currentUser, onReput
     }
 
     try {
+      const token = localStorage.getItem("truthshield_token");
       const res = await fetch("/api/evidence/vote", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { 
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`
+        },
         body: JSON.stringify({
           evidenceId,
-          username: currentUser.username,
           value
         })
       });
@@ -88,7 +91,10 @@ export default function CommunityEvidencePanel({ contentId, currentUser, onReput
   const refreshVoterProfile = async () => {
     if (!currentUser || !onReputationChange) return;
     try {
-      const res = await fetch(`/api/auth/profile/${currentUser.username}`);
+      const token = localStorage.getItem("truthshield_token");
+      const res = await fetch(`/api/auth/profile/${currentUser.username}`, {
+        headers: { "Authorization": `Bearer ${token}` }
+      });
       if (res.ok) {
         const data = await res.json();
         if (data.success) {
@@ -116,12 +122,15 @@ export default function CommunityEvidencePanel({ contentId, currentUser, onReput
     }
 
     try {
+      const token = localStorage.getItem("truthshield_token");
       const res = await fetch("/api/evidence/add", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { 
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`
+        },
         body: JSON.stringify({
           contentId,
-          username: currentUser.username,
           statement: newStatement,
           type: newType,
           linkUrl: newLinkUrl

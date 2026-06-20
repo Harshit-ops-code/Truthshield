@@ -42,7 +42,10 @@ export default function SecurityHub({ currentUser, onLoginSuccess, onLogout }: S
   const fetchDomains = async () => {
     if (!currentUser) return;
     try {
-      const res = await fetch(`/api/domains/${currentUser.username}`);
+      const token = localStorage.getItem("truthshield_token");
+      const res = await fetch(`/api/domains/${currentUser.username}`, {
+        headers: { "Authorization": `Bearer ${token}` }
+      });
       if (res.ok) {
         const data = await res.json();
         setDomainList(data);
@@ -78,6 +81,9 @@ export default function SecurityHub({ currentUser, onLoginSuccess, onLogout }: S
       if (!res.ok) {
         setErrorMessage(data.error || "Authentication failed.");
       } else {
+        if (data.token) {
+          localStorage.setItem("truthshield_token", data.token);
+        }
         onLoginSuccess(data.user);
         setSuccessMessage(`Welcome back, ${data.user.username}!`);
         setTimeout(() => setSuccessMessage(null), 3000);
@@ -111,6 +117,9 @@ export default function SecurityHub({ currentUser, onLoginSuccess, onLogout }: S
       if (!res.ok) {
         setErrorMessage(data.error || "Registration failed.");
       } else {
+        if (data.token) {
+          localStorage.setItem("truthshield_token", data.token);
+        }
         onLoginSuccess(data.user);
         setSuccessMessage(`Account created! Welcome ${data.user.username}`);
         setTimeout(() => setSuccessMessage(null), 3500);
@@ -125,11 +134,14 @@ export default function SecurityHub({ currentUser, onLoginSuccess, onLogout }: S
   const handleToggleDomain = async (domainToToggle: string, typeToToggle: "favorite" | "blocked") => {
     if (!currentUser) return;
     try {
+      const token = localStorage.getItem("truthshield_token");
       const res = await fetch("/api/domains/toggle", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { 
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`
+        },
         body: JSON.stringify({
-          username: currentUser.username,
           domain: domainToToggle,
           type: typeToToggle
         })

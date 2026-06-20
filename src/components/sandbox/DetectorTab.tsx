@@ -8,7 +8,12 @@ import { ScanType, ScanHistoryItem, ImageReport, VideoReport, TextReport, FactRe
 import SecurityHub from "../security/SecurityHub";
 import CommunityEvidencePanel from "./CommunityEvidencePanel";
 
-export default function DetectorTab() {
+interface DetectorTabProps {
+  currentUser: any;
+  setCurrentUser: (user: any) => void;
+}
+
+export default function DetectorTab({ currentUser, setCurrentUser }: DetectorTabProps) {
   const [activeTab, setActiveTab] = useState<ScanType>("image");
 
   useEffect(() => {
@@ -18,30 +23,7 @@ export default function DetectorTab() {
 
   const [loading, setLoading] = useState(false);
   const [history, setHistory] = useState<ScanHistoryItem[]>([]);
-  
-  // Auth state
-  const [currentUser, setCurrentUser] = useState<any>(() => {
-    try {
-      const saved = localStorage.getItem("truthshield_current_user");
-      return saved ? JSON.parse(saved) : null;
-    } catch {
-      return null;
-    }
-  });
-
   const [activeSidebarTab, setActiveSidebarTab] = useState<"history" | "profile">("history");
-
-  useEffect(() => {
-    try {
-      if (currentUser) {
-        localStorage.setItem("truthshield_current_user", JSON.stringify(currentUser));
-      } else {
-        localStorage.removeItem("truthshield_current_user");
-      }
-    } catch (e) {
-      console.log("Failed to sync current user state:", e);
-    }
-  }, [currentUser]);
   
   // Input states
   const [inputText, setInputText] = useState("");
@@ -721,7 +703,7 @@ export default function DetectorTab() {
             <div className="mb-6 p-4 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-800 flex items-start gap-2.5 leading-normal">
               <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
               <div>
-                <p className="font-semibold">Technical Warning Warning / Information</p>
+                <p className="font-semibold">Technical Warning / Information</p>
                 <p className="mt-0.5">{errorText}</p>
               </div>
             </div>

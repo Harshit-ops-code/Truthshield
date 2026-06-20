@@ -43,7 +43,18 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
       body: JSON.stringify(bodyPayload)
     });
 
-    if (!res.ok) throw new Error("TruthShield server returned error status");
+    if (!res.ok) {
+      let errMsg = "TruthShield server returned error status";
+      try {
+        const errJson = await res.json();
+        if (errJson && errJson.error) {
+          errMsg = errJson.error;
+        }
+      } catch (e) {
+        errMsg = `${res.status} ${res.statusText}`;
+      }
+      throw new Error(errMsg);
+    }
     const data = await res.json();
 
     chrome.storage.local.set({

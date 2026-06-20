@@ -164,9 +164,9 @@ export default function ExtensionSimulator() {
 
   return (
     <div id="extension-simulator-panel" className="glass-panel neon-border-hover p-6 sm:p-8 text-left relative overflow-hidden">
-      <div className="flex flex-col lg:flex-row justify-between items-start gap-4 pb-6 border-b border-emerald-500/15">
+      <div className="flex flex-col lg:flex-row justify-between items-start gap-4 pb-6 border-b border-slate-200">
         <div>
-          <span className="inline-flex items-center gap-1 px-3 py-1 bg-emerald-50 border border-emerald-100 text-emerald-700 text-xs font-mono font-bold rounded-full uppercase tracking-wider">
+          <span className="inline-flex items-center gap-1 px-3 py-1 bg-indigo-50 border border-indigo-100 text-indigo-700 text-xs font-mono font-bold rounded-full uppercase tracking-wider">
             Companion Widget Mockup
           </span>
           <h2 className="text-xl sm:text-2xl font-display font-medium tracking-tight text-slate-900 mt-2">
@@ -188,7 +188,7 @@ export default function ExtensionSimulator() {
               }}
               className={`px-3 py-1.5 rounded-xl text-xs font-mono font-bold uppercase transition-all cursor-pointer ${
                 selectedArticleId === art.id
-                  ? "bg-emerald-600 text-white shadow-sm"
+                  ? "bg-brand-accent text-white shadow-sm"
                   : "bg-slate-100 text-slate-600 hover:bg-slate-200"
               }`}
             >
@@ -211,7 +211,7 @@ export default function ExtensionSimulator() {
             
             <div className="ml-4 flex-1 bg-slate-200/50 border border-slate-200 rounded-lg px-2.5 py-1 text-xs text-slate-600 flex items-center justify-between font-mono">
               <div className="flex items-center gap-1.5 overflow-hidden text-ellipsis whitespace-nowrap">
-                <span className="text-emerald-600">https://</span>
+                <span className="text-brand-accent font-semibold">https://</span>
                 <span className="text-slate-700 font-sans font-medium">{currentArticle.source}/news/feed</span>
               </div>
               <ExternalLink className="w-3.5 h-3.5 text-slate-500" />
@@ -226,7 +226,7 @@ export default function ExtensionSimulator() {
           >
             <div className="bg-white/90 p-6 rounded-xl border border-slate-200/80 shadow-2xs text-left">
               <div className="flex items-center justify-between text-xs text-slate-400 font-mono mb-2">
-                <span className="uppercase text-emerald-600 tracking-wider font-bold">{currentArticle.source}</span>
+                <span className="uppercase text-brand-accent tracking-wider font-bold">{currentArticle.source}</span>
                 <span>{currentArticle.date}</span>
               </div>
               <h1 className="text-lg sm:text-xl font-display font-medium text-slate-900 leading-snug">
@@ -239,7 +239,7 @@ export default function ExtensionSimulator() {
 
               <div className="mt-6 pt-4 border-t border-slate-100">
                 <p className="text-[10px] font-mono text-slate-400 uppercase font-bold tracking-wider mb-2 flex items-center gap-1">
-                  <Sparkles className="w-3 h-3 text-amber-550" /> Curated Test Highlights:
+                  <Sparkles className="w-3 h-3 text-brand-accent" /> Curated Test Highlights:
                 </p>
                 <div className="flex flex-col gap-1.5">
                   {currentArticle.suggestions.map((sug, i) => (
@@ -249,7 +249,7 @@ export default function ExtensionSimulator() {
                         setHighlightedText(sug);
                         triggerExtensionCheck(sug);
                       }}
-                      className="text-left py-1 px-2.5 rounded-lg text-xs font-medium bg-emerald-50/50 hover:bg-emerald-100/60 text-emerald-800 transition-all border border-emerald-100/30 block hover:translate-x-0.5 duration-200 cursor-pointer"
+                      className="text-left py-1 px-2.5 rounded-lg text-xs font-medium bg-indigo-50/50 hover:bg-indigo-100/60 text-indigo-850 transition-all border border-indigo-100/30 block hover:translate-x-0.5 duration-200 cursor-pointer"
                     >
                       "{sug}"
                     </button>
@@ -268,12 +268,12 @@ export default function ExtensionSimulator() {
               >
                 <div
                   onClick={() => triggerExtensionCheck(highlightedText)}
-                  className="px-3 py-2 hover:bg-slate-50 flex items-center justify-between gap-2 border-b border-slate-100 text-emerald-600 font-semibold"
+                  className="px-3 py-2 hover:bg-slate-50 flex items-center justify-between gap-2 border-b border-slate-100 text-brand-accent font-semibold"
                 >
                   <span className="flex items-center gap-2 font-display">
-                    <Shield className="w-3.5 h-3.5 text-emerald-600 animate-pulse" /> Check with TruthShield
+                    <Shield className="w-3.5 h-3.5 text-brand-accent animate-pulse" /> Check with TruthShield
                   </span>
-                  <span className="text-[9px] bg-emerald-50 px-1.5 py-0.5 rounded text-emerald-700 font-mono font-bold whitespace-nowrap">Instant</span>
+                  <span className="text-[9px] bg-indigo-50 px-1.5 py-0.5 rounded text-brand-gold font-mono font-bold whitespace-nowrap">Instant</span>
                 </div>
                 <div className="px-3 py-1.5 text-[10px] text-slate-400 overflow-hidden text-ellipsis whitespace-nowrap">
                   Selected: "{highlightedText}"
@@ -282,8 +282,8 @@ export default function ExtensionSimulator() {
             )}
             
             {!highlightedText && (
-              <div className="absolute top-4 right-4 bg-emerald-650 text-white text-[10px] px-3 py-1.5 rounded-full font-mono font-bold shadow-sm border border-emerald-500/20 flex items-center gap-1.5 animate-bounce pointer-events-none">
-                <Info className="w-3.5 h-3.5 text-emerald-100" />
+              <div className="absolute top-4 right-4 bg-brand-accent text-white text-[10px] px-3 py-1.5 rounded-full font-mono font-bold shadow-sm border border-brand-accent/20 flex items-center gap-1.5 animate-bounce pointer-events-none">
+                <Info className="w-3.5 h-3.5 text-indigo-100" />
                 <span>Drag to highlight sentences above</span>
               </div>
             )}
@@ -296,12 +296,31 @@ export default function ExtensionSimulator() {
             
             <div className="bg-slate-50 text-slate-800 px-4 py-3 flex items-center justify-between border-b border-slate-200">
               <div className="flex items-center gap-2">
-                <div className="bg-emerald-600 p-1.5 rounded-lg shadow-sm">
+                <div className="bg-brand-accent p-1.5 rounded-lg shadow-sm">
                   <Shield className="w-4 h-4 text-white" />
                 </div>
                 <span className="font-display font-bold text-xs tracking-wider uppercase text-slate-700">TruthShield Extension</span>
               </div>
-              <span className="px-1.5 py-0.5 rounded bg-emerald-50 text-[9px] text-emerald-700 font-mono font-bold border border-emerald-200">ACTIVE</span>
+              <span className="px-1.5 py-0.5 rounded bg-indigo-50 text-[9px] text-brand-gold font-mono font-bold border border-indigo-200/50">ACTIVE</span>
+            </div>
+
+            {/* Premium high-tech dummy character avatar sub-header */}
+            <div className="bg-slate-50/50 px-4 py-2 flex items-center justify-between border-b border-slate-200/60">
+              <div className="flex items-center gap-2.5">
+                <svg className="w-6.5 h-6.5 text-brand-accent rounded-full bg-indigo-50 border border-indigo-200/50 p-0.5" viewBox="0 0 100 100" fill="none" stroke="currentColor" strokeWidth="6" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="50" cy="40" r="22" fill="#FFFFFF" stroke="#4F46E5" strokeWidth="5" />
+                  <path d="M 36 38 Q 50 30 64 38" stroke="#2563EB" strokeWidth="4" />
+                  <rect x="34" y="38" width="32" height="6" rx="2" fill="#2563EB" stroke="none" />
+                  <path d="M 20 82 A 30 30 0 0 1 80 82" stroke="#4F46E5" strokeWidth="5" fill="none" />
+                  <circle cx="50" cy="18" r="4" fill="#2563EB" stroke="none" />
+                  <line x1="50" y1="18" x2="50" y2="28" stroke="#2563EB" strokeWidth="2" strokeDasharray="2 2" />
+                </svg>
+                <div className="text-[10px] text-left">
+                  <p className="font-bold text-slate-800">Agent Sentinel (Dummy Chara)</p>
+                  <p className="text-slate-400 font-mono leading-none">Class-C Grounding Node</p>
+                </div>
+              </div>
+              <span className="text-[9px] text-slate-500 font-mono font-semibold bg-slate-100 border border-slate-200 px-2 py-0.5 rounded-md">ID: TS-4809</span>
             </div>
 
             <div className="p-5 flex-1 flex flex-col gap-4 overflow-y-auto max-h-[450px]">
@@ -313,11 +332,11 @@ export default function ExtensionSimulator() {
                   </p>
                 </div>
               ) : (
-                <div className="bg-emerald-50/30 border border-dashed border-emerald-100/50 rounded-xl p-6 text-center text-xs text-slate-500">
-                  <Eye className="w-6 h-6 text-emerald-600 mx-auto mb-2" />
+                <div className="bg-indigo-50/30 border border-dashed border-indigo-100/50 rounded-xl p-6 text-center text-xs text-slate-500">
+                  <Eye className="w-6 h-6 text-brand-accent mx-auto mb-2" />
                   <p className="font-semibold font-display text-slate-700">Select statement to scan</p>
                   <p className="text-[10px] text-slate-400 mt-1">
-                    Select text inside the news layout or click a preset highlight suggests.
+                    Select text inside the news layout or click a preset highlight suggestions.
                   </p>
                 </div>
               )}
@@ -325,8 +344,8 @@ export default function ExtensionSimulator() {
               {isAnalyzing ? (
                 <div className="bg-slate-50 py-12 text-center rounded-xl border border-slate-100 flex flex-col items-center gap-3">
                   <div className="relative">
-                    <div className="w-8 h-8 rounded-full border-2 border-emerald-500/10 border-t-emerald-500 animate-spin" />
-                    <Shield className="w-3.5 h-3.5 text-emerald-600 absolute inset-0 m-auto" />
+                    <div className="w-8 h-8 rounded-full border-2 border-brand-accent/10 border-t-brand-accent animate-spin" />
+                    <Shield className="w-3.5 h-3.5 text-brand-accent absolute inset-0 m-auto" />
                   </div>
                   <p className="text-xs font-semibold font-mono text-slate-500">Cross-referencing database indices...</p>
                 </div>
@@ -337,7 +356,7 @@ export default function ExtensionSimulator() {
                       <p className="text-[10px] font-mono font-semibold text-slate-400 uppercase">Verdict</p>
                       <p className={`text-xs sm:text-sm font-display font-bold uppercase mt-1 leading-none ${
                         extensionReport.verdict.includes("FALSE") ? "text-rose-600" :
-                        extensionReport.verdict.includes("UNVERIFIED") ? "text-amber-600" : "text-emerald-600"
+                        extensionReport.verdict.includes("UNVERIFIED") ? "text-amber-600" : "text-brand-accent"
                       }`}>
                         {extensionReport.verdict}
                       </p>
@@ -347,7 +366,7 @@ export default function ExtensionSimulator() {
                       <p className="text-[10px] font-mono font-semibold text-slate-400 uppercase">Credibility</p>
                       <div className="flex items-center gap-1 mt-0.5">
                         <span className={`text-sm sm:text-base font-bold font-display ${
-                          extensionReport.sourceCredibility >= 6 ? "text-emerald-600" : "text-rose-600"
+                          extensionReport.sourceCredibility >= 6 ? "text-brand-accent" : "text-rose-600"
                         }`}>{extensionReport.sourceCredibility}/10</span>
                         <span className="text-[9px] text-slate-400 font-mono">Index</span>
                       </div>
@@ -377,7 +396,7 @@ export default function ExtensionSimulator() {
 
                   <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs text-slate-500 leading-relaxed text-left">
                     <p className="font-mono text-[9px] font-bold text-slate-400 uppercase mb-1.5 flex items-center gap-1">
-                      <ThumbsUp className="w-3 h-3 text-emerald-600" /> Grounding Evidence:
+                      <ThumbsUp className="w-3 h-3 text-brand-accent" /> Grounding Evidence:
                     </p>
                     {extensionReport.summary}
                   </div>
@@ -394,7 +413,7 @@ export default function ExtensionSimulator() {
                     value={customClaimInput}
                     onChange={(e) => setCustomClaimInput(e.target.value)}
                     placeholder="e.g. Alien bases detected..."
-                    className="flex-1 bg-slate-50 border border-slate-200 rounded-lg py-1.5 px-2.5 text-xs focus:ring-1 focus:ring-emerald-500 focus:outline-none"
+                    className="flex-1 bg-slate-50 border border-slate-200 rounded-lg py-1.5 px-2.5 text-xs focus:ring-1 focus:ring-brand-accent focus:outline-none"
                   />
                   <button
                     onClick={() => {
@@ -404,7 +423,7 @@ export default function ExtensionSimulator() {
                         setCustomClaimInput("");
                       }
                     }}
-                    className="bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg p-1.5 cursor-pointer shadow-2xs transition-colors"
+                    className="bg-brand-accent hover:bg-blue-600 text-white rounded-lg p-1.5 cursor-pointer shadow-2xs transition-colors"
                   >
                     <Search className="w-3.5 h-3.5" />
                   </button>

@@ -4,11 +4,107 @@ import { createServer as createViteServer } from "vite";
 import Groq from "groq-sdk";
 import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
+import crypto from "crypto";
 
 dotenv.config();
 
 const app = express();
 const PORT = 3000;
+
+// ─── Cryptographic Security Utilities ─────────────────────────────────────────
+
+const JWT_SECRET = process.env.JWT_SECRET || crypto.randomBytes(32).toString("hex");
+
+/**
+ * Hash password with PBKDF2 (SHA-512) and a random salt
+ */
+function hashPassword(password: string): string {
+  const salt = crypto.randomBytes(16).toString("hex");
+  const hash = crypto.pbkdf2Sync(password, salt, 10000, 64, "sha512").toString("hex");
+  return `${salt}:${hash}`;
+}
+
+/**
+ * Verify password against stored PBKDF2 hash
+ */
+function verifyPassword(password: string, storedHash: string): boolean {
+  try {
+    const [salt, hash] = storedHash.split(":");
+    if (!salt || !hash) return false;
+    const checkHash = crypto.pbkdf2Sync(password, salt, 10000, 64, "sha512").toString("hex");
+    return hash === checkHash;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Generate a cryptographically signed HMAC token (JWT-like)
+ */
+function generateToken(payload: object, expiryHours = 24): string {
+  const expiresAt = Date.now() + expiryHours * 60 * 60 * 1000;
+  const body = Buffer.from(JSON.stringify({ ...payload, expiresAt })).toString("base64url");
+  const signature = crypto.createHmac("sha256", JWT_SECRET).update(body).digest("base64url");
+  return `${body}.${signature}`;
+}
+
+/**
+ * Verify HMAC token and return decoded payload
+ */
+function verifyToken(token: string): any {
+  try {
+    const [bodyB64, signature] = token.split(".");
+    if (!bodyB64 || !signature) return null;
+    const expectedSignature = crypto.createHmac("sha256", JWT_SECRET).update(bodyB64).digest("base64url");
+    if (signature !== expectedSignature) return null;
+    const payload = JSON.parse(Buffer.from(bodyB64, "base64url").toString("utf8"));
+    if (Date.now() > payload.expiresAt) return null; // expired token
+    return payload;
+  } catch {
+    return null;
+  }
+}
+
+// ─── Security Middlewares ──────────────────────────────────────────────────────
+
+/**
+ * Express middleware to enforce authentication via Bearer Token
+ */
+function authenticateToken(req: any, res: any, next: any) {
+  const authHeader = req.headers["authorization"];
+  const token = authHeader && authHeader.split(" ")[1];
+  if (!token) {
+    return res.status(401).json({ error: "Access token is required. Please login." });
+  }
+  const payload = verifyToken(token);
+  if (!payload) {
+    return res.status(403).json({ error: "Your session has expired or is invalid. Please login again." });
+  }
+  req.user = payload;
+  next();
+}
+
+/**
+ * Simple in-memory rate limiting middleware
+ */
+const rateLimitMap = new Map<string, { count: number; resetTime: number }>();
+function rateLimiter(limit: number, windowMs: number) {
+  return (req: any, res: any, next: any) => {
+    const ip = req.ip || req.headers["x-forwarded-for"] || req.socket.remoteAddress || "unknown_ip";
+    const now = Date.now();
+    let record = rateLimitMap.get(ip);
+    if (!record || now > record.resetTime) {
+      record = { count: 0, resetTime: now + windowMs };
+    }
+    record.count++;
+    rateLimitMap.set(ip, record);
+    if (record.count > limit) {
+      console.warn(`[SECURITY WARNING] Rate limit exceeded for IP: ${ip} on route: ${req.path}`);
+      return res.status(429).json({ error: "Too many requests from this device. Please try again later." });
+    }
+    next();
+  };
+}
 
 // Increase body limit to support base64 uploads for images and media
 app.use(express.json({ limit: "50mb" }));
@@ -105,7 +201,7 @@ async function callVisionAI(
   if (groq) {
     try {
       const completion = await groq.chat.completions.create({
-        model: "llama-3.2-11b-vision-preview",
+        model: "meta-llama/llama-4-scout-17b-16e-instruct",
         messages: [
           { role: "system", content: systemPrompt },
           {
@@ -684,7 +780,7 @@ const usersDb: { [username: string]: UserProfile & { passwordHash: string } } = 
   harshit_sentinel: {
     username: "harshit_sentinel",
     email: "harshitkk5830@gmail.com",
-    passwordHash: "password",
+    passwordHash: hashPassword("password"),
     reputation: 175,
     badge: "Senior Sentinel",
     favorites: ["reuters.com", "apnews.com", "wikipedia.org"],
@@ -693,7 +789,7 @@ const usersDb: { [username: string]: UserProfile & { passwordHash: string } } = 
   fact_check_reuters: {
     username: "fact_check_reuters",
     email: "reuters@factcheck.org",
-    passwordHash: "secure123",
+    passwordHash: hashPassword("secure123"),
     reputation: 520,
     badge: "Official Partner",
     favorites: ["reuters.com"],
@@ -702,7 +798,7 @@ const usersDb: { [username: string]: UserProfile & { passwordHash: string } } = 
   hoax_buster_99: {
     username: "hoax_buster_99",
     email: "buster@gmail.com",
-    passwordHash: "buster",
+    passwordHash: hashPassword("buster"),
     reputation: 110,
     badge: "Trusted Verifier",
     favorites: ["snopes.com", "politifact.com"],
@@ -776,10 +872,14 @@ function getBadge(reputation: number): string {
   return "Novice Grounder";
 }
 
-app.post("/api/auth/register", (req, res) => {
+// Authentication & Session Endpoints (Rate Limited to 5 requests / min)
+app.post("/api/auth/register", rateLimiter(5, 60 * 1000), (req, res) => {
   const { username, password, email } = req.body;
   if (!username || !password || !email) {
-    return res.status(400).json({ error: "All fields are required." });
+    return res.status(400).json({ error: "All registration fields are required." });
+  }
+  if (username.length < 3 || password.length < 6) {
+    return res.status(400).json({ error: "Username must be at least 3 chars and password at least 6 chars." });
   }
   const normalized = username.toLowerCase().trim();
   if (usersDb[normalized]) {
@@ -788,7 +888,7 @@ app.post("/api/auth/register", (req, res) => {
   const newUser: UserProfile & { passwordHash: string } = {
     username: normalized,
     email: email.trim(),
-    passwordHash: password,
+    passwordHash: hashPassword(password),
     reputation: 10,
     badge: "Novice Grounder",
     favorites: [],
@@ -796,24 +896,31 @@ app.post("/api/auth/register", (req, res) => {
   };
   usersDb[normalized] = newUser;
   const { passwordHash, ...safeUser } = newUser;
-  res.json({ success: true, user: safeUser });
+  const token = generateToken({ username: normalized });
+  res.json({ success: true, user: safeUser, token });
 });
 
-app.post("/api/auth/login", (req, res) => {
+app.post("/api/auth/login", rateLimiter(5, 60 * 1000), (req, res) => {
   const { username, password } = req.body;
   if (!username || !password) {
-    return res.status(400).json({ error: "Username and password are required." });
+    return res.status(400).json({ error: "Username or email, and password are required." });
   }
   const normalized = username.toLowerCase().trim();
-  const user = usersDb[normalized];
-  if (!user || user.passwordHash !== password) {
-    return res.status(401).json({ error: "Invalid username or password credentials." });
+  let user = usersDb[normalized];
+  if (!user) {
+    user = Object.values(usersDb).find(
+      (u) => u.email.toLowerCase().trim() === normalized
+    ) as any;
+  }
+  if (!user || !verifyPassword(password, user.passwordHash)) {
+    return res.status(401).json({ error: "Invalid username/email or password credentials." });
   }
   const { passwordHash, ...safeUser } = user;
-  res.json({ success: true, user: safeUser });
+  const token = generateToken({ username: user.username });
+  res.json({ success: true, user: safeUser, token });
 });
 
-app.get("/api/auth/profile/:username", (req, res) => {
+app.get("/api/auth/profile/:username", authenticateToken, (req, res) => {
   const normalized = req.params.username.toLowerCase().trim();
   const user = usersDb[normalized];
   if (!user) {
@@ -823,8 +930,12 @@ app.get("/api/auth/profile/:username", (req, res) => {
   res.json({ success: true, user: safeUser });
 });
 
-app.get("/api/domains/:username", (req, res) => {
+// Domain Filters Endpoints (Token Authenticated)
+app.get("/api/domains/:username", authenticateToken, (req: any, res) => {
   const normalized = req.params.username.toLowerCase().trim();
+  if (req.user.username !== normalized) {
+    return res.status(403).json({ error: "Forbidden: Cannot view other user domain filters." });
+  }
   const user = usersDb[normalized];
   if (!user) {
     return res.status(404).json({ error: "User profile not found." });
@@ -832,10 +943,11 @@ app.get("/api/domains/:username", (req, res) => {
   res.json({ favorites: user.favorites, blocked: user.blocked });
 });
 
-app.post("/api/domains/toggle", (req, res) => {
-  const { username, domain, type } = req.body;
-  if (!username || !domain || !type) {
-    return res.status(400).json({ error: "Missing required fields." });
+app.post("/api/domains/toggle", authenticateToken, (req: any, res) => {
+  const { domain, type } = req.body;
+  const username = req.user.username; // Verified identity from token
+  if (!domain || !type) {
+    return res.status(400).json({ error: "Missing required fields: domain and type." });
   }
   const normalizedUser = username.toLowerCase().trim();
   const user = usersDb[normalizedUser];
@@ -861,6 +973,7 @@ app.post("/api/domains/toggle", (req, res) => {
   res.json({ favorites: user.favorites, blocked: user.blocked });
 });
 
+// Community Verification & Evidence Endpoints
 app.get("/api/evidence/:contentId", (req, res) => {
   const contentId = req.params.contentId;
   const matches = evidenceDb
@@ -874,10 +987,11 @@ app.get("/api/evidence/:contentId", (req, res) => {
   res.json(matches);
 });
 
-app.post("/api/evidence/add", (req, res) => {
-  const { contentId, username, statement, type, linkUrl } = req.body;
-  if (!contentId || !username || !statement || !type) {
-    return res.status(400).json({ error: "Required fields are missing." });
+app.post("/api/evidence/add", authenticateToken, (req: any, res) => {
+  const { contentId, statement, type, linkUrl } = req.body;
+  const username = req.user.username; // Secure identity from token
+  if (!contentId || !statement || !type) {
+    return res.status(400).json({ error: "Required fields are missing: contentId, statement, type." });
   }
   const normalizedUser = username.toLowerCase().trim();
   const user = usersDb[normalizedUser];
@@ -914,10 +1028,11 @@ app.post("/api/evidence/add", (req, res) => {
   res.json(matches);
 });
 
-app.post("/api/evidence/vote", (req, res) => {
-  const { evidenceId, username, value } = req.body;
-  if (!evidenceId || !username || !value) {
-    return res.status(400).json({ error: "Missing voting properties." });
+app.post("/api/evidence/vote", authenticateToken, (req: any, res) => {
+  const { evidenceId, value } = req.body;
+  const username = req.user.username; // Secure identity from token
+  if (!evidenceId || !value) {
+    return res.status(400).json({ error: "Missing voting properties: evidenceId and value." });
   }
   const ev = evidenceDb.find((item) => item.id === evidenceId);
   if (!ev) {
@@ -980,5 +1095,17 @@ async function startServer() {
     console.log(`[TruthShield Backend] Groq: ${hasGroqKey ? "ACTIVE" : "not set"} | Gemini: ${hasGeminiKey ? "ACTIVE" : "not set"}`);
   });
 }
+
+// Global Error Handler Middleware
+app.use((err: any, req: any, res: any, next: any) => {
+  console.error("[SERVER ERROR BOUNDARY]", {
+    timestamp: new Date().toISOString(),
+    method: req.method,
+    path: req.path,
+    message: err.message,
+    stack: err.stack
+  });
+  res.status(500).json({ error: "An internal server error occurred on the TruthShield gateway. Please try again." });
+});
 
 startServer();
