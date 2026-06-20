@@ -1,3 +1,5 @@
+process.env.NODE_OPTIONS = '--dns-result-order=ipv4first';
+
 import express from "express";
 import path from "path";
 import { createServer as createViteServer } from "vite";
@@ -5,34 +7,36 @@ import Groq from "groq-sdk";
 import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
 import crypto from "crypto";
+import bcrypt from "bcryptjs";
+import cors from "cors";
+import rateLimit from "express-rate-limit";
+import fs from "fs";
 
 dotenv.config();
 
 const app = express();
-const PORT = 3000;
+const PORT = parseInt(process.env.PORT || "3000", 10);
+
+app.use(cors({ origin: ['https://truthshield-nu.vercel.app', 'http://localhost:3000'] }));
+
 
 // ─── Cryptographic Security Utilities ─────────────────────────────────────────
 
 const JWT_SECRET = process.env.JWT_SECRET || crypto.randomBytes(32).toString("hex");
 
 /**
- * Hash password with PBKDF2 (SHA-512) and a random salt
+ * Hash password with bcryptjs
  */
 function hashPassword(password: string): string {
-  const salt = crypto.randomBytes(16).toString("hex");
-  const hash = crypto.pbkdf2Sync(password, salt, 10000, 64, "sha512").toString("hex");
-  return `${salt}:${hash}`;
+  return bcrypt.hashSync(password, 10);
 }
 
 /**
- * Verify password against stored PBKDF2 hash
+ * Verify password against stored bcryptjs hash
  */
 function verifyPassword(password: string, storedHash: string): boolean {
   try {
-    const [salt, hash] = storedHash.split(":");
-    if (!salt || !hash) return false;
-    const checkHash = crypto.pbkdf2Sync(password, salt, 10000, 64, "sha512").toString("hex");
-    return hash === checkHash;
+    return bcrypt.compareSync(password, storedHash);
   } catch {
     return false;
   }
@@ -104,6 +108,37 @@ function rateLimiter(limit: number, windowMs: number) {
     }
     next();
   };
+}
+
+const apiLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 10,
+  message: { error: "Too many requests from this IP, please try again after a minute." },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+const strictLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 3,
+  message: { error: "Strict analysis rate limit reached. Max 3 requests per minute." },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+app.use("/api/", apiLimiter);
+app.use("/api/analyze-image", strictLimiter);
+app.use("/api/analyze-video", strictLimiter);
+
+/**
+ * Sanitize input values against XSS and limit max string lengths
+ */
+function sanitize(input: any, maxLength = 5000): string {
+  if (typeof input !== "string") return "";
+  return input
+    .replace(/<[^>]*>/g, "")
+    .trim()
+    .slice(0, maxLength);
 }
 
 // Increase body limit to support base64 uploads for images and media
@@ -219,12 +254,14 @@ async function callVisionAI(
         max_tokens: 2048,
       });
       const rawText = completion.choices[0]?.message?.content || "{}";
-      // Extract JSON block if wrapped in markdown code fences
-      const jsonMatch =
-        rawText.match(/```json\s*([\s\S]*?)```/) ||
-        rawText.match(/({[\s\S]*})/);
-      const jsonStr = jsonMatch ? jsonMatch[1] || jsonMatch[0] : rawText;
-      return JSON.parse(jsonStr.trim());
+      const jsonStr = rawText
+        .replace(/^```json\s*/i, '')
+        .replace(/^```\s*/i, '')
+        .replace(/```\s*$/i, '')
+        .trim();
+      const start = jsonStr.indexOf('{');
+      const end = jsonStr.lastIndexOf('}');
+      return JSON.parse(jsonStr.slice(start, end + 1));
     } catch (groqErr: any) {
       console.warn("[TruthShield] Groq Vision call failed, trying Gemini fallback:", groqErr.message);
     }
@@ -249,6 +286,18 @@ async function callVisionAI(
 
 // ─── API Endpoints ──────────────────────────────────────────────────────────────
 
+// Health endpoint
+app.get("/health", (req, res) => {
+  res.json({ status: "ok", timestamp: new Date().toISOString() });
+});
+
+// Self-ping keep-alive
+if (process.env.RENDER_URL) {
+  setInterval(() => {
+    fetch(`${process.env.RENDER_URL}/health`).catch(() => {});
+  }, 14 * 60 * 1000);
+}
+
 // Status endpoint
 app.get("/api/status", (req, res) => {
   res.json({
@@ -264,7 +313,7 @@ app.get("/api/status", (req, res) => {
 
 // ─── Endpoint 1: AI Text Detector ─────────────────────────────────────────────
 app.post("/api/analyze-text", async (req, res) => {
-  const { text } = req.body;
+  const text = sanitize(req.body.text, 5000);
 
   if (!text || text.trim().length === 0) {
     return res.status(400).json({ error: "Text is required for analysis." });
@@ -273,6 +322,8 @@ app.post("/api/analyze-text", async (req, res) => {
   // ─── Try HuggingFace chatgpt-detector-single if token is configured ───
   const hasHFKey = !!process.env.HF_API_KEY && process.env.HF_API_KEY !== "your_huggingface_token_here" && process.env.HF_API_KEY !== "";
   if (hasHFKey) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 8000);
     try {
       const hfRes = await fetch(
         "https://api-inference.huggingface.co/models/Hello-SimpleAI/chatgpt-detector-single",
@@ -283,8 +334,10 @@ app.post("/api/analyze-text", async (req, res) => {
           },
           method: "POST",
           body: JSON.stringify({ inputs: text }),
+          signal: controller.signal,
         }
       );
+      clearTimeout(timeoutId);
 
       if (hfRes.ok) {
         const data = await hfRes.json();
@@ -320,6 +373,7 @@ app.post("/api/analyze-text", async (req, res) => {
       }
       console.warn("[TruthShield] HuggingFace detector API returned error status, falling back to LLM.");
     } catch (e: any) {
+      clearTimeout(timeoutId);
       console.warn("[TruthShield] HuggingFace detector request failed, falling back to LLM:", e.message);
     }
   }
@@ -396,7 +450,8 @@ Respond ONLY with a valid JSON object:
 
 // ─── Endpoint 2: Fact Checker ──────────────────────────────────────────────────
 app.post("/api/verify-rumor", async (req, res) => {
-  const { query, fullArticle } = req.body;
+  const query = sanitize(req.body.query, 5000);
+  const fullArticle = sanitize(req.body.fullArticle, 5000);
   const contentToVerify = query || fullArticle;
 
   if (!contentToVerify || contentToVerify.trim().length === 0) {
@@ -533,14 +588,15 @@ async function getBase64FromUrlOrData(
 
 // ─── Endpoint 3: Image Deepfake Checker ───────────────────────────────────────
 app.post("/api/analyze-image", async (req, res) => {
-  const { imageBase64, mimeType } = req.body;
+  const imageBase64 = req.body.imageBase64;
+  const mimeType = sanitize(req.body.mimeType, 100);
+  const fileName = sanitize(req.body.fileName, 500);
 
   if (!imageBase64) {
     return res.status(400).json({ error: "Image data (base64 or URL) is required." });
   }
 
   if (!hasRealApiKey) {
-    const { fileName } = req.body;
     const isAuthentic = /(authentic|canon|real|camera|legit|news)/i.test(fileName || "");
     const score = isAuthentic ? 6 : 89;
     
@@ -604,7 +660,8 @@ Respond ONLY with a valid JSON object:
 
 // ─── Endpoint 4: Video Deepfake Analyzer ──────────────────────────────────────
 app.post("/api/analyze-video", async (req, res) => {
-  const { videoFileName, videoBase64Frame } = req.body;
+  const videoFileName = sanitize(req.body.videoFileName, 500);
+  const videoBase64Frame = req.body.videoBase64Frame;
 
   if (!hasRealApiKey) {
     return res.json({
@@ -678,7 +735,7 @@ Respond ONLY with a valid JSON object:
 
 // ─── Endpoint 5: Scam Message Checker ─────────────────────────────────────────
 app.post("/api/analyze-message", async (req, res) => {
-  const { message } = req.body;
+  const message = sanitize(req.body.message, 500);
 
   if (!message || message.trim().length === 0) {
     return res.status(400).json({ error: "Message content is required for analysis." });
@@ -776,11 +833,14 @@ interface CommunityEvidence {
   votedBy: { [username: string]: "up" | "down" };
 }
 
-const usersDb: { [username: string]: UserProfile & { passwordHash: string } } = {
+const USERS_FILE = path.join(process.cwd(), "users.json");
+const EVIDENCE_FILE = path.join(process.cwd(), "evidence.json");
+
+const seedUsers: { [username: string]: UserProfile & { passwordHash: string } } = {
   harshit_sentinel: {
     username: "harshit_sentinel",
     email: "harshitkk5830@gmail.com",
-    passwordHash: hashPassword("password"),
+    passwordHash: "$2b$10$ioWRcxuIT2NO5Wo5FsSJIOLACUPVFftwBwKnWzubPbzNVfm0K5n7y",
     reputation: 175,
     badge: "Senior Sentinel",
     favorites: ["reuters.com", "apnews.com", "wikipedia.org"],
@@ -789,7 +849,7 @@ const usersDb: { [username: string]: UserProfile & { passwordHash: string } } = 
   fact_check_reuters: {
     username: "fact_check_reuters",
     email: "reuters@factcheck.org",
-    passwordHash: hashPassword("secure123"),
+    passwordHash: "$2b$10$48o1q3H5hSpHtu9ZluwuNeDv0c6EDzmCp9JUpYSELL0MVRo5guj/O",
     reputation: 520,
     badge: "Official Partner",
     favorites: ["reuters.com"],
@@ -798,7 +858,7 @@ const usersDb: { [username: string]: UserProfile & { passwordHash: string } } = 
   hoax_buster_99: {
     username: "hoax_buster_99",
     email: "buster@gmail.com",
-    passwordHash: hashPassword("buster"),
+    passwordHash: "$2b$10$BaMKG1yWrhzl/CeNpEzR/O/R1PgKQygkAUGdkmgobpSS7TPYGsVPq",
     reputation: 110,
     badge: "Trusted Verifier",
     favorites: ["snopes.com", "politifact.com"],
@@ -806,7 +866,7 @@ const usersDb: { [username: string]: UserProfile & { passwordHash: string } } = 
   },
 };
 
-const evidenceDb: CommunityEvidence[] = [
+const seedEvidence: CommunityEvidence[] = [
   {
     id: "ev-1",
     contentId: "Midjourney GAN Portrait (Synthetic)",
@@ -865,6 +925,54 @@ const evidenceDb: CommunityEvidence[] = [
   },
 ];
 
+// Load helpers
+function loadUsers(): { [username: string]: UserProfile & { passwordHash: string } } {
+  try {
+    if (fs.existsSync(USERS_FILE)) {
+      const data = fs.readFileSync(USERS_FILE, "utf8");
+      return JSON.parse(data);
+    }
+  } catch (error) {
+    console.error("Failed to load users from file persistence:", error);
+  }
+  saveUsers(seedUsers);
+  return { ...seedUsers };
+}
+
+function loadEvidence(): CommunityEvidence[] {
+  try {
+    if (fs.existsSync(EVIDENCE_FILE)) {
+      const data = fs.readFileSync(EVIDENCE_FILE, "utf8");
+      return JSON.parse(data);
+    }
+  } catch (error) {
+    console.error("Failed to load evidence from file persistence:", error);
+  }
+  saveEvidence(seedEvidence);
+  return [...seedEvidence];
+}
+
+// Write persistence helpers. Replace with Supabase for production.
+function saveUsers(data: { [username: string]: UserProfile & { passwordHash: string } }) {
+  try {
+    fs.writeFileSync(USERS_FILE, JSON.stringify(data, null, 2), "utf8");
+  } catch (error) {
+    console.error("Failed to save users to file persistence:", error);
+  }
+}
+
+function saveEvidence(data: CommunityEvidence[]) {
+  try {
+    fs.writeFileSync(EVIDENCE_FILE, JSON.stringify(data, null, 2), "utf8");
+  } catch (error) {
+    console.error("Failed to save evidence to file persistence:", error);
+  }
+}
+
+// Load databases
+const usersDb = loadUsers();
+const evidenceDb = loadEvidence();
+
 function getBadge(reputation: number): string {
   if (reputation >= 200) return "Master Forensic Analyst";
   if (reputation >= 80) return "Senior Sentinel";
@@ -874,7 +982,10 @@ function getBadge(reputation: number): string {
 
 // Authentication & Session Endpoints (Rate Limited to 5 requests / min)
 app.post("/api/auth/register", rateLimiter(5, 60 * 1000), (req, res) => {
-  const { username, password, email } = req.body;
+  const username = sanitize(req.body.username, 500);
+  const password = typeof req.body.password === "string" ? req.body.password.trim() : "";
+  const email = sanitize(req.body.email, 500);
+
   if (!username || !password || !email) {
     return res.status(400).json({ error: "All registration fields are required." });
   }
@@ -895,13 +1006,17 @@ app.post("/api/auth/register", rateLimiter(5, 60 * 1000), (req, res) => {
     blocked: [],
   };
   usersDb[normalized] = newUser;
+  saveUsers(usersDb);
+
   const { passwordHash, ...safeUser } = newUser;
   const token = generateToken({ username: normalized });
   res.json({ success: true, user: safeUser, token });
 });
 
 app.post("/api/auth/login", rateLimiter(5, 60 * 1000), (req, res) => {
-  const { username, password } = req.body;
+  const username = sanitize(req.body.username, 500);
+  const password = typeof req.body.password === "string" ? req.body.password.trim() : "";
+
   if (!username || !password) {
     return res.status(400).json({ error: "Username or email, and password are required." });
   }
@@ -921,7 +1036,7 @@ app.post("/api/auth/login", rateLimiter(5, 60 * 1000), (req, res) => {
 });
 
 app.get("/api/auth/profile/:username", authenticateToken, (req, res) => {
-  const normalized = req.params.username.toLowerCase().trim();
+  const normalized = sanitize(req.params.username, 500).toLowerCase().trim();
   const user = usersDb[normalized];
   if (!user) {
     return res.status(404).json({ error: "User profile not found." });
@@ -932,7 +1047,7 @@ app.get("/api/auth/profile/:username", authenticateToken, (req, res) => {
 
 // Domain Filters Endpoints (Token Authenticated)
 app.get("/api/domains/:username", authenticateToken, (req: any, res) => {
-  const normalized = req.params.username.toLowerCase().trim();
+  const normalized = sanitize(req.params.username, 500).toLowerCase().trim();
   if (req.user.username !== normalized) {
     return res.status(403).json({ error: "Forbidden: Cannot view other user domain filters." });
   }
@@ -944,7 +1059,8 @@ app.get("/api/domains/:username", authenticateToken, (req: any, res) => {
 });
 
 app.post("/api/domains/toggle", authenticateToken, (req: any, res) => {
-  const { domain, type } = req.body;
+  const domain = sanitize(req.body.domain, 500);
+  const type = sanitize(req.body.type, 100);
   const username = req.user.username; // Verified identity from token
   if (!domain || !type) {
     return res.status(400).json({ error: "Missing required fields: domain and type." });
@@ -970,12 +1086,13 @@ app.post("/api/domains/toggle", authenticateToken, (req: any, res) => {
       user.blocked.push(cleanDomain);
     }
   }
+  saveUsers(usersDb);
   res.json({ favorites: user.favorites, blocked: user.blocked });
 });
 
 // Community Verification & Evidence Endpoints
 app.get("/api/evidence/:contentId", (req, res) => {
-  const contentId = req.params.contentId;
+  const contentId = sanitize(req.params.contentId, 500);
   const matches = evidenceDb
     .filter(
       (ev) =>
@@ -988,7 +1105,10 @@ app.get("/api/evidence/:contentId", (req, res) => {
 });
 
 app.post("/api/evidence/add", authenticateToken, (req: any, res) => {
-  const { contentId, statement, type, linkUrl } = req.body;
+  const contentId = sanitize(req.body.contentId, 500);
+  const statement = sanitize(req.body.statement, 5000);
+  const type = sanitize(req.body.type, 100) as "support" | "refute";
+  const linkUrl = sanitize(req.body.linkUrl, 1000);
   const username = req.user.username; // Secure identity from token
   if (!contentId || !statement || !type) {
     return res.status(400).json({ error: "Required fields are missing: contentId, statement, type." });
@@ -1017,6 +1137,10 @@ app.post("/api/evidence/add", authenticateToken, (req: any, res) => {
     votedBy: { [username]: "up" },
   };
   evidenceDb.push(newEvidence);
+  saveEvidence(evidenceDb);
+  if (user) {
+    saveUsers(usersDb);
+  }
   const matches = evidenceDb
     .filter(
       (ev) =>
@@ -1029,7 +1153,8 @@ app.post("/api/evidence/add", authenticateToken, (req: any, res) => {
 });
 
 app.post("/api/evidence/vote", authenticateToken, (req: any, res) => {
-  const { evidenceId, value } = req.body;
+  const evidenceId = sanitize(req.body.evidenceId, 100);
+  const value = sanitize(req.body.value, 100) as "up" | "down";
   const username = req.user.username; // Secure identity from token
   if (!evidenceId || !value) {
     return res.status(400).json({ error: "Missing voting properties: evidenceId and value." });
@@ -1063,7 +1188,9 @@ app.post("/api/evidence/vote", authenticateToken, (req: any, res) => {
     authorUser.badge = getBadge(authorUser.reputation);
     ev.userReputation = authorUser.reputation;
     ev.userBadge = authorUser.badge;
+    saveUsers(usersDb);
   }
+  saveEvidence(evidenceDb);
   const matches = evidenceDb
     .filter((item) => item.contentId === ev.contentId)
     .sort((a, b) => b.votes - a.votes);
