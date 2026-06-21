@@ -147,6 +147,11 @@ app.use(express.urlencoded({ limit: "50mb", extended: true }));
 
 // ─── API Key Detection ─────────────────────────────────────────────────────────
 
+const hasCerebrasKey =
+  !!process.env.CEREBRAS_API_KEY &&
+  process.env.CEREBRAS_API_KEY !== "your_cerebras_key_here" &&
+  process.env.CEREBRAS_API_KEY !== "";
+
 const hasGroqKey =
   !!process.env.GROQ_API_KEY &&
   process.env.GROQ_API_KEY !== "MY_GROQ_API_KEY" &&
@@ -157,10 +162,18 @@ const hasGeminiKey =
   process.env.GEMINI_API_KEY !== "MY_GEMINI_API_KEY" &&
   process.env.GEMINI_API_KEY !== "";
 
-const hasRealApiKey = hasGroqKey || hasGeminiKey;
+const hasOpenRouterKey =
+  !!process.env.OPENROUTER_API_KEY &&
+  process.env.OPENROUTER_API_KEY !== "";
+
+const hasRealApiKey = hasCerebrasKey || hasGroqKey || hasGeminiKey || hasOpenRouterKey;
 
 // Active engine label (for status endpoint)
-const activeEngine = hasGroqKey
+const activeEngine = hasOpenRouterKey
+  ? "OpenRouter (google/gemini-2.5-flash)"
+  : hasCerebrasKey
+  ? "Cerebras Fast Inference (gpt-oss-120b)"
+  : hasGroqKey
   ? "Groq (LLaMA 3 - Primary)"
   : hasGeminiKey
   ? "Google Gemini (Fallback)"
@@ -176,8 +189,10 @@ const gemini = hasGeminiKey
     })
   : null;
 
+console.log(`[TruthShield] Cerebras Key: ${hasCerebrasKey ? "✅ ACTIVE" : "❌ Not set"}`);
 console.log(`[TruthShield] Groq Key: ${hasGroqKey ? "✅ ACTIVE" : "❌ Not set"}`);
 console.log(`[TruthShield] Gemini Key: ${hasGeminiKey ? "✅ ACTIVE" : "❌ Not set"}`);
+console.log(`[TruthShield] OpenRouter Key: ${hasOpenRouterKey ? "✅ ACTIVE" : "❌ Not set"}`);
 console.log(`[TruthShield] Active Engine: ${activeEngine}`);
 
 // ─── Unified AI Helpers ────────────────────────────────────────────────────────
@@ -188,6 +203,36 @@ console.log(`[TruthShield] Active Engine: ${activeEngine}`);
  * Always returns a parsed JSON object.
  */
 async function callAI(systemPrompt: string, userPrompt: string): Promise<any> {
+  // ── Try Cerebras first ──
+  if (hasCerebrasKey) {
+    try {
+      const res = await fetch("https://api.cerebras.ai/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${process.env.CEREBRAS_API_KEY}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: "gpt-oss-120b",
+          messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: userPrompt },
+          ],
+          response_format: { type: "json_object" },
+          temperature: 0.3,
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const rawText = data.choices?.[0]?.message?.content || "{}";
+        return JSON.parse(rawText);
+      }
+      console.warn("[TruthShield] Cerebras call failed with status:", res.status, "trying Groq fallback");
+    } catch (cerebrasErr: any) {
+      console.warn("[TruthShield] Cerebras call threw error, trying Groq fallback:", cerebrasErr.message);
+    }
+  }
+
   // ── Try Groq first ──
   if (groq) {
     try {
@@ -319,133 +364,135 @@ app.post("/api/analyze-text", async (req, res) => {
     return res.status(400).json({ error: "Text is required for analysis." });
   }
 
-  // ─── Try HuggingFace chatgpt-detector-single if token is configured ───
-  const hasHFKey = !!process.env.HF_API_KEY && process.env.HF_API_KEY !== "your_huggingface_token_here" && process.env.HF_API_KEY !== "";
-  if (hasHFKey) {
+  const hasWAIKey = !!process.env.WAI_API_KEY && process.env.WAI_API_KEY !== "your_wasitaigenerated_token_here" && process.env.WAI_API_KEY !== "";
+  if (hasWAIKey) {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 8000);
     try {
-      const hfRes = await fetch(
-        "https://api-inference.huggingface.co/models/Hello-SimpleAI/chatgpt-detector-single",
+      const waiRes = await fetch(
+        "https://www.wasitaigenerated.com/api/v1/detect/text",
         {
           headers: {
-            Authorization: `Bearer ${process.env.HF_API_KEY}`,
+            Authorization: `Bearer ${process.env.WAI_API_KEY}`,
             "Content-Type": "application/json",
           },
           method: "POST",
-          body: JSON.stringify({ inputs: text }),
+          body: JSON.stringify({ content: text }),
           signal: controller.signal,
         }
       );
       clearTimeout(timeoutId);
 
-      if (hfRes.ok) {
-        const data = await hfRes.json();
-        // HuggingFace returns: [[{label: "Human", score: 0.12}, {label: "ChatGPT", score: 0.88}]]
-        if (Array.isArray(data) && Array.isArray(data[0])) {
-          const predictions = data[0];
-          const chatgptPred = predictions.find((p: any) => p.label === "ChatGPT");
-          const humanPred = predictions.find((p: any) => p.label === "Human");
-
-          const score = chatgptPred ? Math.round(chatgptPred.score * 100) : 50;
+      if (waiRes.ok) {
+        const data = await waiRes.json();
+        if (data && typeof data.isAI === "boolean") {
+          const confidence = typeof data.confidence === "number" ? data.confidence : 0.5;
+          const score = data.isAI ? Math.round(confidence * 100) : Math.round((1 - confidence) * 100);
           const verdict = score >= 70 ? "AI-Generated" : score >= 35 ? "Mixed / Partially AI" : "Highly Likely Human";
           
           return res.json({
             score,
             verdict,
-            modelLikelyUsed: score >= 50 ? "ChatGPT / GPT-3.5 / GPT-4" : "N/A - Likely Human Writer",
+            modelLikelyUsed: score >= 50 ? "WasItAIGenerated Classifier" : "Human Writer",
             perplexityScore: `${(100 - score).toFixed(1)} - ${score >= 70 ? "Low" : "High"}`,
             burstinessScore: `${score.toFixed(1)} - ${score >= 70 ? "Uniform" : "Diverse"}`,
             sentenceStructure: score >= 70 
               ? "Uniform sentence distributions matching generative token distributions." 
               : "Diverse sentence lengths and natural language flow matching human style.",
-            flaggedSentences: score >= 70 ? [
-              {
-                text: text.substring(0, Math.min(text.length, 120)) + "...",
-                reason: "Lexical patterns match Hello-SimpleAI ChatGPT class signature.",
-                aiConfidence: score
-              }
-            ] : [],
-            analysisExplanation: `Hello-SimpleAI model analysis completed. The HuggingFace text classifier returned a ${(score).toFixed(1)}% probability that this text was produced by ChatGPT.`,
+            flaggedSentences: Array.isArray(data.sentences) 
+              ? data.sentences.filter((s: any) => s.isAI).map((s: any) => ({
+                  text: s.text,
+                  reason: `Sentence matches generative pattern distributions.`,
+                  aiConfidence: Math.round((s.scores?.ai || s.confidence || 0.5) * 100)
+                }))
+              : [],
+            analysisExplanation: `WasItAIGenerated analysis completed. Service returned verdict: ${data.analysis?.likelihood || "N/A"} (${data.analysis?.reasoning || ""}).`,
             simulated: false
           });
         }
       }
-      console.warn("[TruthShield] HuggingFace detector API returned error status, falling back to LLM.");
+      console.warn("[TruthShield] WasItAIGenerated API returned error status, falling back to simulation.");
     } catch (e: any) {
       clearTimeout(timeoutId);
-      console.warn("[TruthShield] HuggingFace detector request failed, falling back to LLM:", e.message);
+      console.warn("[TruthShield] WasItAIGenerated request failed, falling back to simulation:", e.message);
     }
   }
 
-  if (!hasRealApiKey) {
-    const isMockAI =
-      text.length > 150 &&
-      (text.includes("generate") ||
-        text.includes("innovative") ||
-        text.includes("reimagining") ||
-        text.includes("democratize") ||
-        text.includes("efficiency") ||
-        text.includes("furthermore") ||
-        text.includes("testament"));
-    const score = isMockAI
-      ? Math.floor(Math.random() * 20) + 75
-      : Math.floor(Math.random() * 25) + 5;
-    const verdict =
-      score >= 70 ? "AI-Generated" : score >= 35 ? "Mixed / Partially AI" : "Highly Likely Human";
+  const hasGemini = !!process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY !== "";
+  if (hasGemini && gemini) {
+    try {
+      const systemPrompt = `You are an AI writing detector. Analyze the following text and determine if it was written by an AI (like GPT-4, Claude, Gemini) or by a human. Respond ONLY with a valid JSON object.`;
+      const userPrompt = `Analyze this text for perplexity, burstiness, syntax patterns, and stylistic signatures typical of LLMs:
+      
+      Text to analyze:
+      "${text}"
+      
+      Respond ONLY with a valid JSON object:
+      {
+        "score": <number 0-100, where higher means higher AI probability>,
+        "verdict": "AI-Generated" | "Mixed / Partially AI" | "Highly Likely Human",
+        "modelLikelyUsed": <string>,
+        "perplexityScore": <string>,
+        "burstinessScore": <string>,
+        "sentenceStructure": <string>,
+        "flaggedSentences": [{ "text": <string>, "reason": <string>, "aiConfidence": <number 0-100> }],
+        "analysisExplanation": <string>
+      }`;
 
-    return res.json({
-      score,
-      verdict,
-      modelLikelyUsed: score >= 70 ? "GPT-4 / Claude 3.5 Mix" : "Human Writer",
-      perplexityScore: (score * 1.2).toFixed(1),
-      burstinessScore: (100 - score).toFixed(1),
-      sentenceStructure:
-        score >= 70
-          ? "Extremely uniform sentence lengths and signature repetitive transition patterns typical of generative models."
-          : "Highly organic variations in paragraph structures, colloquial rhythms, and uneven sentence distribution.",
-      flaggedSentences:
-        score >= 70
-          ? [
-              {
-                text: text.substring(0, Math.min(text.length, 120)) + "...",
-                reason: "Perfect subject-verb symmetry and cliche stylistic transitions.",
-                aiConfidence: score,
-              },
-            ]
-          : [],
-      analysisExplanation:
-        "Simulation Mode: No GROQ_API_KEY, GEMINI_API_KEY, or HF_API_KEY found in .env. Add a key to unlock the live neural detection engines.",
-      simulated: true,
-    });
+      const response = await gemini.models.generateContent({
+        model: "gemini-2.0-flash",
+        contents: `${systemPrompt}\n\n${userPrompt}`,
+        config: {
+          responseMimeType: "application/json",
+        },
+      });
+      const resultData = JSON.parse(response.text || "{}");
+      return res.json({ ...resultData, simulated: false });
+    } catch (e: any) {
+      console.warn("[TruthShield] Gemini Text Detection failed, falling back to simulation:", e.message);
+    }
   }
 
-  try {
-    const systemPrompt = `You are a cognitive linguist and AI text detection expert. You analyze text to determine if it was written by a human or generated by AI (ChatGPT, GPT-4, Claude, Gemini, etc.). You ALWAYS respond with valid JSON only.`;
+  // Simulation Fallback
+  const isMockAI =
+    text.length > 150 &&
+    (text.includes("generate") ||
+      text.includes("innovative") ||
+      text.includes("reimagining") ||
+      text.includes("democratize") ||
+      text.includes("efficiency") ||
+      text.includes("furthermore") ||
+      text.includes("testament"));
+  const score = isMockAI
+    ? Math.floor(Math.random() * 20) + 75
+    : Math.floor(Math.random() * 25) + 5;
+  const verdict =
+    score >= 70 ? "AI-Generated" : score >= 35 ? "Mixed / Partially AI" : "Highly Likely Human";
 
-    const userPrompt = `Analyze the following text for AI generation signals. Check for perplexity (predictability), burstiness (sentence length variation), stylistic markers, and vocabulary patterns.
-
-Text to analyze:
-"${text}"
-
-Respond ONLY with a valid JSON object:
-{
-  "score": <number 0-100, likelihood of AI generation>,
-  "verdict": <"AI-Generated" | "Mixed / Partially AI" | "Highly Likely Human">,
-  "modelLikelyUsed": <string>,
-  "perplexityScore": <string, e.g. "34.1 - Low">,
-  "burstinessScore": <string, e.g. "12.4 - Highly Uniform">,
-  "sentenceStructure": <string>,
-  "flaggedSentences": [{ "text": <string>, "reason": <string>, "aiConfidence": <number> }],
-  "analysisExplanation": <string>
-}`;
-
-    const resultData = await callAI(systemPrompt, userPrompt);
-    res.json({ ...resultData, simulated: false });
-  } catch (error: any) {
-    console.error("Text analysis API error:", error);
-    res.status(500).json({ error: "Failed to perform AI Text Detection. Details: " + error.message });
-  }
+  res.json({
+    score,
+    verdict,
+    modelLikelyUsed: score >= 70 ? "GPT-4 / Claude 3.5 Mix (Simulation)" : "Human Writer (Simulation)",
+    perplexityScore: (score * 1.2).toFixed(1),
+    burstinessScore: (100 - score).toFixed(1),
+    sentenceStructure:
+      score >= 70
+        ? "Extremely uniform sentence lengths and signature repetitive transition patterns typical of generative models."
+        : "Highly organic variations in paragraph structures, colloquial rhythms, and uneven sentence distribution.",
+    flaggedSentences:
+      score >= 70
+        ? [
+            {
+              text: text.substring(0, Math.min(text.length, 120)) + "...",
+              reason: "Perfect subject-verb symmetry and cliche stylistic transitions.",
+              aiConfidence: score,
+            },
+          ]
+        : [],
+    analysisExplanation:
+      "Simulation Fallback Mode: WAI_API_KEY and Gemini API are inactive or failed. Returned simulated metrics.",
+    simulated: true,
+  });
 });
 
 // ─── Endpoint 2: Fact Checker ──────────────────────────────────────────────────
@@ -458,103 +505,116 @@ app.post("/api/verify-rumor", async (req, res) => {
     return res.status(400).json({ error: "A claim or article is required to search and verify." });
   }
 
-  if (!hasRealApiKey) {
-    return res.json({
-      verdict: "UNVERIFIED (Simulation)",
-      confidenceScore: 50,
-      explanation:
-        "Simulation Mode: No GROQ_API_KEY or GEMINI_API_KEY found. Add either key to .env to enable live fact-checking.",
-      sources: [
-        {
-          title: "Google Fact Check Database",
-          url: "https://toolbox.google.com/factcheck",
-          credibilityScore: 10,
-          organization: "Google Developer Tools",
-          snippet: "Connect an API key to enable AI-powered fact verification.",
+  const prompt = `You are a real-time factual investigator and fake-news analyst. 
+  Cross-reference the following claim or news text with reputable databases, credible journals, and active global news publications to verify its truthfulness.
+  Contrast the rumors against verified details from Snopes, PolitiFact, Reuters, AFP, BBC, etc.
+  
+  Content to verify:
+  "${contentToVerify}"
+  
+  Return your analysis strictly as a JSON object:
+  {
+    "verdict": "CONFIRMED TRUE" | "LIKELY FALSE / FABRICATED" | "MISLEADING / EXAGGERATED" | "UNVERIFIED / INSUFFICIENT DATA",
+    "confidenceScore": <number 0-100>,
+    "explanation": <string>,
+    "sources": [{ "title": <string>, "url": <string>, "credibilityScore": <number>, "organization": <string>, "snippet": <string> }],
+    "flaggedClaims": [{ "claim": <string>, "fact": <string>, "verdict": <string> }],
+    "sourceCredibilityScore": <number 1-10>
+  }`;
+
+  const hasOpenRouter = !!process.env.OPENROUTER_API_KEY && process.env.OPENROUTER_API_KEY !== "";
+  if (hasOpenRouter) {
+    try {
+      const resOpenRouter = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${process.env.OPENROUTER_API_KEY}`,
+          "Content-Type": "application/json",
+          "HTTP-Referer": process.env.APP_URL || "http://localhost:3000",
+          "X-Title": "TruthShield",
         },
-      ],
-      flaggedClaims: [
-        {
-          claim: contentToVerify.substring(0, 100) + "...",
-          fact: "AI-powered cross-referencing is inactive.",
-          verdict: "UNVERIFIED",
-        },
-      ],
-      sourceCredibilityScore: 5,
-      simulated: true,
-    });
+        body: JSON.stringify({
+          model: "google/gemini-2.5-flash",
+          messages: [
+            {
+              role: "user",
+              content: prompt,
+            },
+          ],
+          max_tokens: 1000,
+          response_format: { type: "json_object" }
+        }),
+      });
+
+      if (resOpenRouter.ok) {
+        const data = await resOpenRouter.json();
+        let rawText = data.choices?.[0]?.message?.content || "{}";
+        if (rawText.includes("```")) {
+          const jsonStr = rawText
+            .replace(/^```json\s*/i, '')
+            .replace(/^```\s*/i, '')
+            .replace(/```\s*$/i, '')
+            .trim();
+          const start = jsonStr.indexOf('{');
+          const end = jsonStr.lastIndexOf('}');
+          rawText = jsonStr.slice(start, end + 1);
+        }
+        const resultData = JSON.parse(rawText);
+        return res.json({ ...resultData, simulated: false, groundedSearch: false });
+      } else {
+        const errorText = await resOpenRouter.text();
+        console.warn(`[TruthShield] OpenRouter call failed with status: ${resOpenRouter.status}. Response: ${errorText}`);
+      }
+    } catch (e: any) {
+      console.warn("[TruthShield] OpenRouter Fact Check failed, trying Gemini fallback:", e.message);
+    }
   }
 
-  try {
-    // For Gemini, we can use Google Search Grounding — detect which engine is active
-    if (!hasGroqKey && hasGeminiKey && gemini) {
-      // Use Gemini with live Google Search grounding
-      const prompt = `You are a real-time factual investigator and fake-news analyst. 
-      Cross-reference the following claim or news text with reputable databases, credible journals, and active global news publications to verify its truthfulness.
-      You MUST search for real and up-to-date information. Contrast the rumors against verified details from Snopes, PolitiFact, Reuters, AFP, BBC, etc.
-      
-      Content to verify:
-      "${contentToVerify}"
-      
-      Return your analysis strictly as a JSON object:
-      {
-        "verdict": "CONFIRMED TRUE" | "LIKELY FALSE / FABRICATED" | "MISLEADING / EXAGGERATED" | "UNVERIFIED / INSUFFICIENT DATA",
-        "confidenceScore": <number 0-100>,
-        "explanation": <string>,
-        "sources": [{ "title": <string>, "url": <string>, "credibilityScore": <number>, "organization": <string>, "snippet": <string> }],
-        "flaggedClaims": [{ "claim": <string>, "fact": <string>, "verdict": <string> }],
-        "sourceCredibilityScore": <number 1-10>
-      }`;
-
+  const hasGemini = !!process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY !== "";
+  if (hasGemini && gemini) {
+    try {
+      const geminiPrompt = `${prompt}\n\nYou MUST search for real and up-to-date information.`;
       const response = await gemini.models.generateContent({
         model: "gemini-2.0-flash",
-        contents: prompt,
+        contents: geminiPrompt,
         config: {
           responseMimeType: "application/json",
-          tools: [{ googleSearch: {} }], // Live Google Search Grounding (Gemini only)
+          tools: [{ googleSearch: {} }], // Live Google Search Grounding
         },
       });
 
-      let resultData;
-      try {
-        resultData = JSON.parse(response.text || "{}");
-      } catch {
-        resultData = {
-          verdict: "UNVERIFIED",
-          confidenceScore: 40,
-          explanation: response.text || "Grounding analysis completed but returned unstructured text.",
-          sources: [],
-          flaggedClaims: [],
-          sourceCredibilityScore: 5,
-        };
-      }
+      const resultData = JSON.parse(response.text || "{}");
       return res.json({ ...resultData, simulated: false, groundedSearch: true });
+    } catch (e: any) {
+      console.warn("[TruthShield] Gemini Fact Check failed, falling back to simulation:", e.message);
     }
-
-    // Groq or combined: use knowledge-based fact check
-    const systemPrompt = `You are a professional fact-checker and investigative journalist with expertise in verifying news, rumors, and viral claims. You cross-reference statements against known facts, credible sources (Snopes, PolitiFact, Reuters, AFP, BBC, AP, WHO). You ALWAYS respond with valid JSON only.`;
-
-    const userPrompt = `Fact-check the following claim. Determine whether it is true, false, misleading, or unverifiable. Cite specific organizations, dates, and context.
-
-Content to verify:
-"${contentToVerify}"
-
-Respond ONLY with a valid JSON object:
-{
-  "verdict": <"CONFIRMED TRUE" | "LIKELY FALSE / FABRICATED" | "MISLEADING / EXAGGERATED" | "UNVERIFIED / INSUFFICIENT DATA">,
-  "confidenceScore": <number 0-100>,
-  "explanation": <string>,
-  "sources": [{ "title": <string>, "url": <string>, "credibilityScore": <number>, "organization": <string>, "snippet": <string> }],
-  "flaggedClaims": [{ "claim": <string>, "fact": <string>, "verdict": <string> }],
-  "sourceCredibilityScore": <number 1-10>
-}`;
-
-    const resultData = await callAI(systemPrompt, userPrompt);
-    res.json({ ...resultData, simulated: false, groundedSearch: false });
-  } catch (error: any) {
-    console.error("Fact audit API error:", error);
-    res.status(500).json({ error: "Failed to perform Fact Check. Details: " + error.message });
   }
+
+  // Simulation Fallback
+  res.json({
+    verdict: "UNVERIFIED (Simulation)",
+    confidenceScore: 50,
+    explanation:
+      "Simulation Fallback Mode: OpenRouter and Gemini APIs are inactive or have exceeded quota. Returned baseline fact verification.",
+    sources: [
+      {
+        title: "Google Fact Check Database",
+        url: "https://toolbox.google.com/factcheck",
+        credibilityScore: 10,
+        organization: "Google Developer Tools",
+        snippet: "Connect an API key to enable AI-powered fact verification.",
+      },
+    ],
+    flaggedClaims: [
+      {
+        claim: contentToVerify.substring(0, 100) + "...",
+        fact: "AI-powered cross-referencing is inactive.",
+        verdict: "UNVERIFIED",
+      },
+    ],
+    sourceCredibilityScore: 5,
+    simulated: true,
+  });
 });
 
 // ─── Helper: Base64 from URL or data URI ──────────────────────────────────────
@@ -596,66 +656,168 @@ app.post("/api/analyze-image", async (req, res) => {
     return res.status(400).json({ error: "Image data (base64 or URL) is required." });
   }
 
-  if (!hasRealApiKey) {
-    const isAuthentic = /(authentic|canon|real|camera|legit|news)/i.test(fileName || "");
-    const score = isAuthentic ? 6 : 89;
-    
-    return res.json({
-      score,
-      verdict: score >= 60 ? "AI Generated Image (Simulation)" : "Authentic photography",
-      reasons:
-        score >= 60
-          ? [
-              "Facial boundary blending anomaly detected around ear lobes.",
-              "Unnatural skin texturing void of standard camera high-ISO grain.",
-              "Mismatched specular highlights in the pupillary reflections.",
-            ]
-          : [
-              "Natural skin pore noise density matches general sensor noise floor.",
-              "Background focus drop-off matches natural physics depth-of-field expectations.",
-            ],
-      detectedArtifacts:
-        score >= 60
-          ? [
-              { element: "Temporal Bordering", description: "Soft, smeared transition at hair margins.", severity: "High" },
-              { element: "Specular Pupils", description: "Bilateral reflection lighting vectors deviate by over 14 degrees.", severity: "Medium" },
-            ]
-          : [],
-      pixelAnomaliesDescription:
-        "Simulation Mode: No GROQ_API_KEY or GEMINI_API_KEY found. Add either key to .env to run visual forensic algorithms.",
-      metadataSummary: isAuthentic 
-        ? "No tampering: Normal EXIF markers active (Canon EOS 5D Mk IV)."
-        : "No metadata found. Standard simulation mode active.",
-      simulated: true,
-    });
-  }
-
-  try {
-    const rawData = await getBase64FromUrlOrData(imageBase64, mimeType || "image/jpeg");
-    if (!rawData) {
-      return res.status(400).json({ error: "Could not retrieve or convert valid image data." });
-    }
-
+  const rawData = await getBase64FromUrlOrData(imageBase64, mimeType || "image/jpeg");
+  if (rawData) {
     const systemPrompt = `You are a professional image forensic expert specializing in GAN, Diffusion model (DALL-E, Midjourney, Stable Diffusion), and Deepfake visual pattern detection. Respond with valid JSON only.`;
 
     const userPrompt = `Inspect this image carefully. Examine facial features, eye details, hair structures, background perspective consistency, specular lighting (especially in eye pupils), skin texturing, and edge boundaries. Determine the likelihood this image is AI-generated, deepfaked, or authentic camera photography.
+    
+    Respond ONLY with a valid JSON object:
+    {
+      "score": <number 0-100>,
+      "verdict": <"AI-Generated Image" | "Deepfaked Photo" | "Authentic Photography">,
+      "reasons": [<string>, ...],
+      "detectedArtifacts": [{ "element": <string>, "description": <string>, "severity": <"High" | "Medium" | "Low"> }],
+      "pixelAnomaliesDescription": <string>,
+      "metadataSummary": <string>
+    }`;
 
-Respond ONLY with a valid JSON object:
-{
-  "score": <number 0-100>,
-  "verdict": <"AI-Generated Image" | "Deepfaked Photo" | "Authentic Photography">,
-  "reasons": [<string>, ...],
-  "detectedArtifacts": [{ "element": <string>, "description": <string>, "severity": <"High" | "Medium" | "Low"> }],
-  "pixelAnomaliesDescription": <string>,
-  "metadataSummary": <string>
-}`;
+    // 1. Try Groq
+    const hasGroq = !!process.env.GROQ_API_KEY && process.env.GROQ_API_KEY !== "";
+    if (hasGroq && groq) {
+      try {
+        const completion = await groq.chat.completions.create({
+          model: "meta-llama/llama-4-scout-17b-16e-instruct",
+          messages: [
+            { role: "system", content: systemPrompt },
+            {
+              role: "user",
+              content: [
+                {
+                  type: "image_url",
+                  image_url: { url: `data:${rawData.mimeType};base64,${rawData.data}` },
+                },
+                { type: "text", text: userPrompt },
+              ],
+            },
+          ],
+          temperature: 0.3,
+          max_tokens: 2048,
+        });
+        const rawText = completion.choices[0]?.message?.content || "{}";
+        const jsonStr = rawText
+          .replace(/^```json\s*/i, '')
+          .replace(/^```\s*/i, '')
+          .replace(/```\s*$/i, '')
+          .trim();
+        const start = jsonStr.indexOf('{');
+        const end = jsonStr.lastIndexOf('}');
+        const resultData = JSON.parse(jsonStr.slice(start, end + 1));
+        return res.json({ ...resultData, simulated: false });
+      } catch (e: any) {
+        console.warn("[TruthShield] Groq Image analysis failed, trying OpenRouter fallback:", e.message);
+      }
+    }
 
-    const resultData = await callVisionAI(systemPrompt, userPrompt, rawData.data, rawData.mimeType);
-    res.json({ ...resultData, simulated: false });
-  } catch (error: any) {
-    console.error("Image analysis API error:", error);
-    res.status(500).json({ error: "Failed to perform visual analysis. Details: " + error.message });
+    // 2. Try OpenRouter
+    const hasOpenRouter = !!process.env.OPENROUTER_API_KEY && process.env.OPENROUTER_API_KEY !== "";
+    if (hasOpenRouter) {
+      try {
+        const resOpenRouter = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${process.env.OPENROUTER_API_KEY}`,
+            "Content-Type": "application/json",
+            "HTTP-Referer": process.env.APP_URL || "http://localhost:3000",
+            "X-Title": "TruthShield",
+          },
+          body: JSON.stringify({
+            model: "google/gemini-2.5-flash",
+            messages: [
+              { role: "system", content: systemPrompt },
+              {
+                role: "user",
+                content: [
+                  {
+                    type: "image_url",
+                    image_url: { url: `data:${rawData.mimeType};base64,${rawData.data}` }
+                  },
+                  { type: "text", text: userPrompt }
+                ]
+              }
+            ],
+            max_tokens: 1000,
+            response_format: { type: "json_object" }
+          })
+        });
+
+        if (resOpenRouter.ok) {
+          const data = await resOpenRouter.json();
+          let rawText = data.choices?.[0]?.message?.content || "{}";
+          if (rawText.includes("```")) {
+            const jsonStr = rawText
+              .replace(/^```json\s*/i, '')
+              .replace(/^```\s*/i, '')
+              .replace(/```\s*$/i, '')
+              .trim();
+            const start = jsonStr.indexOf('{');
+            const end = jsonStr.lastIndexOf('}');
+            rawText = jsonStr.slice(start, end + 1);
+          }
+          const resultData = JSON.parse(rawText);
+          return res.json({ ...resultData, simulated: false });
+        } else {
+          const errorText = await resOpenRouter.text();
+          console.warn(`[TruthShield] OpenRouter Image analysis failed with status: ${resOpenRouter.status}. Response: ${errorText}`);
+        }
+      } catch (e: any) {
+        console.warn("[TruthShield] OpenRouter Image analysis error, trying Gemini fallback:", e.message);
+      }
+    }
+
+    // 3. Try Gemini
+    const hasGemini = !!process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY !== "";
+    if (hasGemini && gemini) {
+      try {
+        const imagePart = {
+          inlineData: { mimeType: rawData.mimeType, data: rawData.data },
+        };
+        const textPart = { text: `${systemPrompt}\n\n${userPrompt}` };
+        const response = await gemini.models.generateContent({
+          model: "gemini-2.0-flash",
+          contents: { parts: [imagePart, textPart] },
+          config: { responseMimeType: "application/json" },
+        });
+        const resultData = JSON.parse(response.text || "{}");
+        return res.json({ ...resultData, simulated: false });
+      } catch (e: any) {
+        console.warn("[TruthShield] Gemini Image analysis failed, falling back to simulation:", e.message);
+      }
+    }
   }
+
+  // Simulation Fallback
+  const isAuthentic = /(authentic|canon|real|camera|legit|news)/i.test(fileName || "");
+  const score = isAuthentic ? 6 : 89;
+  
+  res.json({
+    score,
+    verdict: score >= 60 ? "AI Generated Image (Simulation)" : "Authentic photography",
+    reasons:
+      score >= 60
+        ? [
+            "Facial boundary blending anomaly detected around ear lobes.",
+            "Unnatural skin texturing void of standard camera high-ISO grain.",
+            "Mismatched specular highlights in the pupillary reflections.",
+          ]
+        : [
+            "Natural skin pore noise density matches general sensor noise floor.",
+            "Background focus drop-off matches natural physics depth-of-field expectations.",
+          ],
+    detectedArtifacts:
+      score >= 60
+        ? [
+            { element: "Temporal Bordering", description: "Soft, smeared transition at hair margins.", severity: "High" },
+            { element: "Specular Pupils", description: "Bilateral reflection lighting vectors deviate by over 14 degrees.", severity: "Medium" },
+          ]
+        : [],
+    pixelAnomaliesDescription:
+      "Simulation Fallback Mode: Groq Vision is inactive or rate limited. Returned visual forensic metrics.",
+    metadataSummary: isAuthentic 
+      ? "No tampering: Normal EXIF markers active (Canon EOS 5D Mk IV)."
+      : "No metadata found. Standard simulation mode active.",
+    simulated: true,
+  });
 });
 
 // ─── Endpoint 4: Video Deepfake Analyzer ──────────────────────────────────────
@@ -663,74 +825,223 @@ app.post("/api/analyze-video", async (req, res) => {
   const videoFileName = sanitize(req.body.videoFileName, 500);
   const videoBase64Frame = req.body.videoBase64Frame;
 
-  if (!hasRealApiKey) {
-    return res.json({
-      score: 87,
-      verdict: "High Probability Deepfake (Simulation)",
-      lipSyncAccuracy:
-        "Lip movements lack motor-sensory timing consistency (lip boundaries lag active speech tracks by approximately 180ms).",
-      eyeBlinkingRate:
-        "Critically low blinking frequency detected: 2/min (average human baseline is 12-18/min), indicating temporal frame freezing.",
-      facialLandmarks:
-        "Slight jitter (landmark drift) of 4.2 pixels around nasal bridge and eye contour vectors during 30-degree facial rotation.",
-      reasons: [
-        "Temporal discontinuities: Micro-flickering visible around neck collar and chin intersection.",
-        "Audio phase misalignment: Speech waveforms mismatch high-speed visual phoneme formations.",
-        "Unnatural facial texture: Synthetic matte rendering on cheekbones and forehead lacks standard light diffraction.",
-      ],
-      timeline: [
-        { time: "0:02", claim: "Initialization", artifactType: "Soft boundary transition", confidence: 78 },
-        { time: "0:08", claim: "Vocal Phoneme Mismatch", artifactType: "Lip-sync lag", confidence: 91 },
-        { time: "0:14", claim: "Facial Rotation Drift", artifactType: "Landmark skewing", confidence: 85 },
-      ],
-      simulated: true,
-    });
-  }
+  const rawData = videoBase64Frame ? await getBase64FromUrlOrData(videoBase64Frame) : null;
+  let resultData: any;
+  let success = false;
 
-  try {
-    const rawData = videoBase64Frame ? await getBase64FromUrlOrData(videoBase64Frame) : null;
+  const systemPromptImage = `You are a forensic video engineering specialist specializing in deepfake detection. Respond with valid JSON only.`;
+  const userPromptImage = `Analyze this freeze-frame from "${videoFileName || "scanned_video.mp4"}" for deepfake manipulation. Inspect lip sync, eye symmetry, blinking indicators, landmark edge flickering, and digital blending artifacts.
+  
+  Respond ONLY with a valid JSON object:
+  {
+    "score": <number 0-100>,
+    "verdict": <string>,
+    "lipSyncAccuracy": <string>,
+    "eyeBlinkingRate": <string>,
+    "facialLandmarks": <string>,
+    "reasons": [<string>, ...],
+    "timeline": [{ "time": <string>, "claim": <string>, "artifactType": <string>, "confidence": <number> }]
+  }`;
 
-    let resultData: any;
+  const systemPromptText = `You are a forensic video engineering specialist. Respond with valid JSON only.`;
+  const userPromptText = `Perform a probabilistic deepfake audit for a video named "${videoFileName || "unknown_clip.mp4"}". No visual frame is available — list standard deepfake markers and expected risk levels.
+  
+  Respond ONLY with a valid JSON object:
+  {
+    "score": <number 0-100>,
+    "verdict": <string>,
+    "lipSyncAccuracy": <string>,
+    "eyeBlinkingRate": <string>,
+    "facialLandmarks": <string>,
+    "reasons": [<string>, ...],
+    "timeline": [{ "time": <string>, "claim": <string>, "artifactType": <string>, "confidence": <number> }]
+  }`;
 
-    if (rawData) {
-      const systemPrompt = `You are a forensic video engineering specialist specializing in deepfake detection. Respond with valid JSON only.`;
-      const userPrompt = `Analyze this freeze-frame from "${videoFileName || "scanned_video.mp4"}" for deepfake manipulation. Inspect lip sync, eye symmetry, blinking indicators, landmark edge flickering, and digital blending artifacts.
-
-Respond ONLY with a valid JSON object:
-{
-  "score": <number 0-100>,
-  "verdict": <string>,
-  "lipSyncAccuracy": <string>,
-  "eyeBlinkingRate": <string>,
-  "facialLandmarks": <string>,
-  "reasons": [<string>, ...],
-  "timeline": [{ "time": <string>, "claim": <string>, "artifactType": <string>, "confidence": <number> }]
-}`;
-
-      resultData = await callVisionAI(systemPrompt, userPrompt, rawData.data, rawData.mimeType);
-    } else {
-      const systemPrompt = `You are a forensic video engineering specialist. Respond with valid JSON only.`;
-      const userPrompt = `Perform a probabilistic deepfake audit for a video named "${videoFileName || "unknown_clip.mp4"}". No visual frame is available — list standard deepfake markers and expected risk levels.
-
-Respond ONLY with a valid JSON object:
-{
-  "score": <number 0-100>,
-  "verdict": <string>,
-  "lipSyncAccuracy": <string>,
-  "eyeBlinkingRate": <string>,
-  "facialLandmarks": <string>,
-  "reasons": [<string>, ...],
-  "timeline": [{ "time": <string>, "claim": <string>, "artifactType": <string>, "confidence": <number> }]
-}`;
-
-      resultData = await callAI(systemPrompt, userPrompt);
+  // 1. Try Groq
+  const hasGroq = !!process.env.GROQ_API_KEY && process.env.GROQ_API_KEY !== "";
+  if (hasGroq && groq) {
+    try {
+      if (rawData) {
+        const completion = await groq.chat.completions.create({
+          model: "meta-llama/llama-4-scout-17b-16e-instruct",
+          messages: [
+            { role: "system", content: systemPromptImage },
+            {
+              role: "user",
+              content: [
+                {
+                  type: "image_url",
+                  image_url: { url: `data:${rawData.mimeType};base64,${rawData.data}` },
+                },
+                { type: "text", text: userPromptImage },
+              ],
+            },
+          ],
+          temperature: 0.3,
+          max_tokens: 2048,
+        });
+        const rawText = completion.choices[0]?.message?.content || "{}";
+        const jsonStr = rawText
+          .replace(/^```json\s*/i, '')
+          .replace(/^```\s*/i, '')
+          .replace(/```\s*$/i, '')
+          .trim();
+        const start = jsonStr.indexOf('{');
+        const end = jsonStr.lastIndexOf('}');
+        resultData = JSON.parse(jsonStr.slice(start, end + 1));
+      } else {
+        const completion = await groq.chat.completions.create({
+          model: "llama-3.3-70b-versatile",
+          messages: [
+            { role: "system", content: systemPromptText },
+            { role: "user", content: userPromptText },
+          ],
+          temperature: 0.3,
+          max_tokens: 2048,
+          response_format: { type: "json_object" },
+        });
+        const rawText = completion.choices[0]?.message?.content || "{}";
+        resultData = JSON.parse(rawText);
+      }
+      success = true;
+    } catch (e: any) {
+      console.warn("[TruthShield] Groq Video analysis failed, trying OpenRouter fallback:", e.message);
     }
-
-    res.json({ ...resultData, simulated: false });
-  } catch (error: any) {
-    console.error("Video analysis API error:", error);
-    res.status(500).json({ error: "Failed to perform video analysis. Details: " + error.message });
   }
+
+  // 2. Try OpenRouter
+  const hasOpenRouter = !!process.env.OPENROUTER_API_KEY && process.env.OPENROUTER_API_KEY !== "";
+  if (!success && hasOpenRouter) {
+    try {
+      let resOpenRouter;
+      if (rawData) {
+        resOpenRouter = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${process.env.OPENROUTER_API_KEY}`,
+            "Content-Type": "application/json",
+            "HTTP-Referer": process.env.APP_URL || "http://localhost:3000",
+            "X-Title": "TruthShield",
+          },
+          body: JSON.stringify({
+            model: "google/gemini-2.5-flash",
+            messages: [
+              { role: "system", content: systemPromptImage },
+              {
+                role: "user",
+                content: [
+                  {
+                    type: "image_url",
+                    image_url: { url: `data:${rawData.mimeType};base64,${rawData.data}` }
+                  },
+                  { type: "text", text: userPromptImage }
+                ]
+              }
+            ],
+            max_tokens: 1000,
+            response_format: { type: "json_object" }
+          })
+        });
+      } else {
+        resOpenRouter = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${process.env.OPENROUTER_API_KEY}`,
+            "Content-Type": "application/json",
+            "HTTP-Referer": process.env.APP_URL || "http://localhost:3000",
+            "X-Title": "TruthShield",
+          },
+          body: JSON.stringify({
+            model: "google/gemini-2.5-flash",
+            messages: [
+              { role: "system", content: systemPromptText },
+              { role: "user", content: userPromptText }
+            ],
+            max_tokens: 1000,
+            response_format: { type: "json_object" }
+          })
+        });
+      }
+
+      if (resOpenRouter.ok) {
+        const data = await resOpenRouter.json();
+        let rawText = data.choices?.[0]?.message?.content || "{}";
+        if (rawText.includes("```")) {
+          const jsonStr = rawText
+            .replace(/^```json\s*/i, '')
+            .replace(/^```\s*/i, '')
+            .replace(/```\s*$/i, '')
+            .trim();
+          const start = jsonStr.indexOf('{');
+          const end = jsonStr.lastIndexOf('}');
+          rawText = jsonStr.slice(start, end + 1);
+        }
+        resultData = JSON.parse(rawText);
+        success = true;
+      } else {
+        const errorText = await resOpenRouter.text();
+        console.warn(`[TruthShield] OpenRouter Video analysis failed with status: ${resOpenRouter.status}. Response: ${errorText}`);
+      }
+    } catch (e: any) {
+      console.warn("[TruthShield] OpenRouter Video analysis error, trying Gemini fallback:", e.message);
+    }
+  }
+
+  // 3. Try Gemini
+  const hasGemini = !!process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY !== "";
+  if (!success && hasGemini && gemini) {
+    try {
+      if (rawData) {
+        const imagePart = {
+          inlineData: { mimeType: rawData.mimeType, data: rawData.data },
+        };
+        const textPart = { text: `${systemPromptImage}\n\n${userPromptImage}` };
+        const response = await gemini.models.generateContent({
+          model: "gemini-2.0-flash",
+          contents: { parts: [imagePart, textPart] },
+          config: { responseMimeType: "application/json" },
+        });
+        resultData = JSON.parse(response.text || "{}");
+      } else {
+        const response = await gemini.models.generateContent({
+          model: "gemini-2.0-flash",
+          contents: `${systemPromptText}\n\n${userPromptText}`,
+          config: { responseMimeType: "application/json" },
+        });
+        resultData = JSON.parse(response.text || "{}");
+      }
+      success = true;
+    } catch (e: any) {
+      console.warn("[TruthShield] Gemini Video analysis failed, falling back to simulation:", e.message);
+    }
+  }
+
+  if (success) {
+    return res.json({ ...resultData, simulated: false });
+  }
+
+  // Simulation Fallback
+  res.json({
+    score: 87,
+    verdict: "High Probability Deepfake (Simulation)",
+    lipSyncAccuracy:
+      "Lip movements lack motor-sensory timing consistency (lip boundaries lag active speech tracks by approximately 180ms).",
+    eyeBlinkingRate:
+      "Critically low blinking frequency detected: 2/min (average human baseline is 12-18/min), indicating temporal frame freezing.",
+    facialLandmarks:
+      "Slight jitter (landmark drift) of 4.2 pixels around nasal bridge and eye contour vectors during 30-degree facial rotation.",
+    reasons: [
+      "Temporal discontinuities: Micro-flickering visible around neck collar and chin intersection.",
+      "Audio phase misalignment: Speech waveforms mismatch high-speed visual phoneme formations.",
+      "Unnatural facial texture: Synthetic matte rendering on cheekbones and forehead lacks standard light diffraction.",
+    ],
+    timeline: [
+      { time: "0:02", claim: "Initialization", artifactType: "Soft boundary transition", confidence: 78 },
+      { time: "0:08", claim: "Vocal Phoneme Mismatch", artifactType: "Lip-sync lag", confidence: 91 },
+      { time: "0:14", claim: "Facial Rotation Drift", artifactType: "Landmark skewing", confidence: 85 },
+    ],
+    simulated: true,
+  });
 });
 
 // ─── Endpoint 5: Scam Message Checker ─────────────────────────────────────────
@@ -741,69 +1052,124 @@ app.post("/api/analyze-message", async (req, res) => {
     return res.status(400).json({ error: "Message content is required for analysis." });
   }
 
-  if (!hasRealApiKey) {
-    const isMockScam =
-      message.includes("win") ||
-      message.includes("urgent") ||
-      message.includes("lottery") ||
-      message.includes("account") ||
-      message.includes("bank") ||
-      message.includes("http") ||
-      message.includes("payment");
-    const score = isMockScam ? 91 : 12;
-    const verdict = score >= 70 ? "HIGH RISK SCAM" : score >= 35 ? "SUSPICIOUS" : "LOW RISK / SAFE";
-    const urgencyLevel = score >= 70 ? "CRITICAL" : score >= 35 ? "HIGH" : "NORMAL";
+  const hasCerebras = !!process.env.CEREBRAS_API_KEY && process.env.CEREBRAS_API_KEY !== "";
+  if (hasCerebras) {
+    try {
+      const systemPrompt = `You are a cybersecurity expert specializing in social engineering, phishing, and SMS/WhatsApp scam detection. You analyze messages for manipulation tactics, fraudulent patterns, and urgency language. You ALWAYS respond with valid JSON only.`;
 
-    return res.json({
-      score,
-      verdict,
-      urgencyLevel,
-      detectedThreats:
-        score >= 70
-          ? [
-              { element: "Fake Impersonation", description: "Spoofing of government or banking institutions.", severity: "High" },
-              { element: "Suspicious Payment Link", description: "Leads to unverified dynamic URL templates.", severity: "High" },
-              { element: "Urgency Tactics", description: "Coerces rapid actions within limited timing window.", severity: "Medium" },
-            ]
-          : [],
-      reasons:
-        score >= 70
-          ? [
-              "Fake government/bank impersonation attempt identified.",
-              "Suspicious dynamic payment or verification link detected.",
-              "Urgency pressure tactics coercing immediate response.",
-            ]
-          : ["Normal conversational rhythm.", "No suspicious payment vectors detected."],
-      analysisExplanation:
-        "Simulation Mode: No GROQ_API_KEY or GEMINI_API_KEY found. Add either key to .env to run real neural scam diagnostics.",
-      simulated: true,
-    });
+      const userPrompt = `Analyze the following message for scam risk — check for urgency language, suspicious links, impersonation attempts, and financial fraud patterns.
+      
+      Message:
+      "${message}"
+      
+      Respond ONLY with a valid JSON object:
+      {
+        "score": <number 0-100>,
+        "verdict": <"HIGH RISK SCAM" | "SUSPICIOUS" | "LOW RISK / SAFE">,
+        "urgencyLevel": <"CRITICAL" | "HIGH" | "NORMAL">,
+        "detectedThreats": [{ "element": <string>, "description": <string>, "severity": <"High" | "Medium" | "Low"> }],
+        "reasons": [<string>, ...],
+        "analysisExplanation": <string>
+      }`;
+
+      const response = await fetch("https://api.cerebras.ai/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${process.env.CEREBRAS_API_KEY}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: "gpt-oss-120b",
+          messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: userPrompt },
+          ],
+          response_format: { type: "json_object" },
+          temperature: 0.3,
+        }),
+      });
+      if (response.ok) {
+        const data = await response.json();
+        const rawText = data.choices?.[0]?.message?.content || "{}";
+        const resultData = JSON.parse(rawText);
+        return res.json({ ...resultData, simulated: false });
+      } else {
+        const errorBody = await response.text();
+        console.warn("[TruthShield] Cerebras Scam Check failed, status:", response.status, "body:", errorBody);
+      }
+    } catch (e: any) {
+      console.warn("[TruthShield] Cerebras Scam Check error, falling back to simulation:", e.message);
+    }
   }
 
-  try {
-    const systemPrompt = `You are a cybersecurity expert specializing in social engineering, phishing, and SMS/WhatsApp scam detection. You analyze messages for manipulation tactics, fraudulent patterns, and urgency language. You ALWAYS respond with valid JSON only.`;
+  const hasGemini = !!process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY !== "";
+  if (hasGemini && gemini) {
+    try {
+      const systemPrompt = `You are a cybersecurity expert specializing in social engineering, phishing, and SMS/WhatsApp scam detection. You analyze messages for manipulation tactics, fraudulent patterns, and urgency language. You ALWAYS respond with valid JSON only.`;
+      const userPrompt = `Analyze the following message for scam risk — check for urgency language, suspicious links, impersonation attempts, and financial fraud patterns.
+      
+      Message:
+      "${message}"
+      
+      Respond ONLY with a valid JSON object:
+      {
+        "score": <number 0-100>,
+        "verdict": "HIGH RISK SCAM" | "SUSPICIOUS" | "LOW RISK / SAFE",
+        "urgencyLevel": "CRITICAL" | "HIGH" | "NORMAL",
+        "detectedThreats": [{ "element": <string>, "description": <string>, "severity": "High" | "Medium" | "Low" }],
+        "reasons": [<string>, ...],
+        "analysisExplanation": <string>
+      }`;
 
-    const userPrompt = `Analyze the following message for scam risk — check for urgency language, suspicious links, impersonation attempts, and financial fraud patterns.
-
-Message:
-"${message}"
-
-Respond ONLY with a valid JSON object:
-{
-  "score": <number 0-100>,
-  "verdict": <"HIGH RISK SCAM" | "SUSPICIOUS" | "LOW RISK / SAFE">,
-  "urgencyLevel": <"CRITICAL" | "HIGH" | "NORMAL">,
-  "detectedThreats": [{ "element": <string>, "description": <string>, "severity": <"High" | "Medium" | "Low"> }],
-  "reasons": [<string>, ...],
-  "analysisExplanation": <string>
-}`;
-
-    const resultData = await callAI(systemPrompt, userPrompt);
-    res.json({ ...resultData, simulated: false });
-  } catch (error: any) {
-    console.error("Message analysis API error:", error);
-    res.status(500).json({ error: "Failed to perform scam analysis. Details: " + error.message });
+      const response = await gemini.models.generateContent({
+        model: "gemini-2.0-flash",
+        contents: `${systemPrompt}\n\n${userPrompt}`,
+        config: { responseMimeType: "application/json" },
+      });
+      const resultData = JSON.parse(response.text || "{}");
+      return res.json({ ...resultData, simulated: false });
+    } catch (e: any) {
+      console.warn("[TruthShield] Gemini Scam Check failed, falling back to simulation:", e.message);
+    }
   }
+
+  // Simulation Fallback
+  const isMockScam =
+    message.includes("win") ||
+    message.includes("urgent") ||
+    message.includes("lottery") ||
+    message.includes("account") ||
+    message.includes("bank") ||
+    message.includes("http") ||
+    message.includes("payment");
+  const score = isMockScam ? 91 : 12;
+  const verdict = score >= 70 ? "HIGH RISK SCAM" : score >= 35 ? "SUSPICIOUS" : "LOW RISK / SAFE";
+  const urgencyLevel = score >= 70 ? "CRITICAL" : score >= 35 ? "HIGH" : "NORMAL";
+
+  res.json({
+    score,
+    verdict,
+    urgencyLevel,
+    detectedThreats:
+      score >= 70
+        ? [
+            { element: "Fake Impersonation", description: "Spoofing of government or banking institutions.", severity: "High" },
+            { element: "Suspicious Payment Link", description: "Leads to unverified dynamic URL templates.", severity: "High" },
+            { element: "Urgency Tactics", description: "Coerces rapid actions within limited timing window.", severity: "Medium" },
+          ]
+        : [],
+    reasons:
+      score >= 70
+        ? [
+            "Fake government/bank impersonation attempt identified.",
+            "Suspicious dynamic payment or verification link detected.",
+            "Urgency pressure tactics coercing immediate response.",
+          ]
+        : ["Normal conversational rhythm.", "No suspicious payment vectors detected."],
+    analysisExplanation:
+      "Simulation Fallback Mode: Cerebras API is inactive or has exceeded quota. Returned simulated scam results.",
+    simulated: true,
+  });
 });
 
 // ==========================================================
