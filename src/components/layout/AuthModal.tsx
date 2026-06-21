@@ -65,7 +65,7 @@ export default function AuthModal({ isOpen, onClose, onLoginSuccess }: AuthModal
       />
 
       {/* Modal Box */}
-      <div className="relative w-full max-w-4xl bg-white rounded-3xl overflow-hidden shadow-2xl border border-slate-200 flex flex-col md:flex-row z-10 animate-in fade-in zoom-in-95 duration-200">
+      <div className="relative w-full max-w-4xl bg-white rounded-3xl overflow-hidden shadow-2xl border border-slate-200 flex flex-col md:flex-row z-10 animate-in fade-in zoom-in-95 duration-200 max-h-[95vh] sm:max-h-[90vh] overflow-y-auto md:overflow-visible">
         
         {/* Close Button */}
         <button 

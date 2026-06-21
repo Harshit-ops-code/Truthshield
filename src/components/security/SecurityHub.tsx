@@ -343,31 +343,33 @@ export default function SecurityHub({ currentUser, onLoginSuccess, onLogout }: S
             </div>
 
             <form onSubmit={handleAddDomain} className="space-y-2.5">
-              <div className="flex gap-1.5 text-xs">
+              <div className="flex flex-col gap-2.5 text-xs">
                 <input
                   type="text"
                   required
                   placeholder="e.g. spoofnews.cc"
                   value={domainInput}
                   onChange={(e) => setDomainInput(e.target.value)}
-                  className="flex-1 bg-slate-900/80 border border-slate-800 rounded-xl px-2.5 py-1.5 text-xs focus:ring-1 focus:ring-emerald-500 focus:outline-none text-white"
+                  className="w-full bg-slate-900/80 border border-slate-800 rounded-xl px-2.5 py-1.5 text-xs focus:ring-1 focus:ring-emerald-500 focus:outline-none text-white"
                 />
                 
-                <select
-                  value={domainType}
-                  onChange={(e) => setDomainType(e.target.value as "favorite" | "blocked")}
-                  className="bg-slate-900/80 border border-slate-800 px-2 rounded-xl text-xs text-slate-300 focus:outline-none"
-                >
-                  <option value="favorite font-medium">Favorite</option>
-                  <option value="blocked font-medium">Block</option>
-                </select>
+                <div className="flex gap-2 w-full">
+                  <select
+                    value={domainType}
+                    onChange={(e) => setDomainType(e.target.value as "favorite" | "blocked")}
+                    className="flex-1 bg-slate-900/80 border border-slate-800 px-2 py-1.5 rounded-xl text-xs text-slate-300 focus:outline-none cursor-pointer"
+                  >
+                    <option value="favorite">Favorite</option>
+                    <option value="blocked">Block</option>
+                  </select>
 
-                <button
-                  type="submit"
-                  className="bg-emerald-600 hover:bg-emerald-700 text-white p-2 rounded-xl transition-all cursor-pointer shadow-sm"
-                >
-                  <Plus className="w-4 h-4" />
-                </button>
+                  <button
+                    type="submit"
+                    className="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-xl transition-all cursor-pointer shadow-sm flex items-center justify-center gap-1 font-bold text-xs"
+                  >
+                    <Plus className="w-3.5 h-3.5" /> <span>Add Rule</span>
+                  </button>
+                </div>
               </div>
               <p className="text-[10px] text-slate-400 font-sans leading-tight">
                 Adding domains as favorites increases credibility reports, and blocking flags them inside sandbox diagnostics instantly.
