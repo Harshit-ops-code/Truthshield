@@ -76,7 +76,7 @@ export default function AuthModal({ isOpen, onClose, onLoginSuccess }: AuthModal
         </button>
 
         {/* LEFT SIDE: Reference Image styling (Slate-50 background, big headers, features checklist) */}
-        <div className="w-full md:w-1/2 bg-slate-50 p-8 sm:p-12 flex flex-col justify-between border-r border-slate-200 select-none">
+        <div className="hidden md:flex w-full md:w-1/2 bg-slate-50 p-8 sm:p-12 flex-col justify-between border-r border-slate-200 select-none">
           <div className="space-y-6">
             <div>
               <h2 className="text-4xl sm:text-5xl font-sans font-extrabold text-slate-900 leading-tight tracking-tight">
